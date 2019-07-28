@@ -1,0 +1,7 @@
+{
+    "authority": "https://login.microsoftonline.com/organizations",
+    "client_id": "3a52d46c-a064-45db-92af-5ca0f06c14af",
+    "scope": ["https://graph.microsoft.com/.default"],
+    "redirect_uri": "http://localhost",
+    "client_secret": "/+aJS@CPBW/Hh30u3hFQvGp6j_iJZmA+"
+}
