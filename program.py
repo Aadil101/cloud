@@ -15,7 +15,6 @@ def store_tokens(access_token, refresh_token):
     keyring.set_password('Box_Refresh', 'aadilislam101@gmail.com', refresh_token)
 
 def main():
-	###
 	http_provider = HttpProvider()
 	client_id='befefb6d-535c-4769-9ab5-68ee79452fda'
 	scopes=['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
