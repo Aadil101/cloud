@@ -9,6 +9,11 @@ import requests
 from storage import Dump, GDrive, DBox, Box, ODrive
 from print_utils import print_bytes
 
+def store_tokens(access_token, refresh_token):
+    # Use keyring to store the tokens
+    keyring.set_password('Box_Auth', 'aadilislam101@gmail.com', access_token)
+    keyring.set_password('Box_Refresh', 'aadilislam101@gmail.com', refresh_token)
+
 def main():
 	###
 	http_provider = HttpProvider()
@@ -23,6 +28,7 @@ def main():
 	oauth = OAuth2(
 		client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
 		client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
+		store_tokens=store_tokens,
 		access_token=keyring.get_password('Box_Auth', 'aadilislam101@gmail.com'),
 		refresh_token=keyring.get_password('Box_Refresh', 'aadilislam101@gmail.com')
 	)
@@ -32,8 +38,10 @@ def main():
 	###
 	dbox = DBox('Wl2ZKVSB8DQAAAAAAAABFXh6kGHd3mQ0QgvESD9PT-oKmPPif0RERQnEqnAyl_2n')
 	###
-	dump = Dump({"google":gdrive, "dropbox":dbox, "box":box, "onedrive":odrive})
-	print(dump.details())
+	dump = Dump({'google':gdrive, 'dropbox':dbox, "onedrive":odrive, "box":box})
+	###
+	# print(dump.details())
+	print(dump.files())
 	###
 	for arg in sys.argv[1:]:
 		if os.path.isfile(arg):
@@ -41,5 +49,5 @@ def main():
 		else:
 			print('\'{}\' is not a file!'.format(arg))
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
