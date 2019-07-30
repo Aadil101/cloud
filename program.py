@@ -8,6 +8,7 @@ from onedrivecmd.utils.actions import do_quota
 import requests
 from storage import Dump, GDrive, DBox, Box, ODrive
 from print_utils import print_bytes
+import time
 
 def store_tokens(access_token, refresh_token):
     # Use keyring to store the tokens
@@ -39,14 +40,28 @@ def main():
 	###
 	dump = Dump({'google':gdrive, 'dropbox':dbox, "onedrive":odrive, "box":box})
 	###
-	# print(dump.details())
-	print(dump.files())
-	###
 	for arg in sys.argv[1:]:
 		if os.path.isfile(arg):
 			print('\'{}\' is '.format(arg) + print_bytes(os.path.getsize(arg)))	
 		else:
 			print('\'{}\' is not a file!'.format(arg))
+	###
+	storage = dump.storage()
+	used_bytes = 0
+	remaining_bytes = 0
+	for _ , drive in storage.items():
+		used_bytes += drive['used'] 
+		remaining_bytes += drive['remaining']
+	print('{} used of {} available'.format(print_bytes(used_bytes), print_bytes(used_bytes+remaining_bytes)))
+	#t0 = time.time()
+	files = dump.files()
+	print(files)
+	#print("time: "+str(time.time()-t0))
+	_id = '0B0Lnx0czKN_6ZmMwTW5KT3dGMFE'
+	print("I want file with id: " + _id)
+	_id_drive = dump.lookup[list(files[_id].keys())[0]]
+	_id_files = _id_drive.files_list(_id)
+	print(_id_files)
 
 if __name__ == '__main__':
     main()

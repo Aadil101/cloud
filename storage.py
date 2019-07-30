@@ -5,45 +5,45 @@ from boxsdk import Client
 from onedrivesdk import OneDriveClient
 from onedrivecmd.utils.actions import do_quota
 import requests
+import datetime
 
 class Dump:
     def __init__(self, lookup={}):
         self.lookup = lookup
     def add_drive(self, drive, name):
         self.lookup[name] = drive
-    def details(self):
+    def storage(self):
         return {name:{"used":drive.used_storage_bytes(), "remaining":drive.remaining_storage_bytes()} \
                 for name, drive in self.lookup.items()}
     def files(self):
-        return {name:drive.files_list() \
-                for name, drive in self.lookup.items()}
+        return {_id:{name:details} for name, drive in self.lookup.items() for _id, details in drive.files_list().items()}
 
 class GDrive(GoogleDrive):
     def used_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesByService'][0]['bytesUsed'])
     def remaining_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesTotal']) - self.used_storage_bytes()
-    def files_list(self):
-        return [(file['title'], file['mimeType'], file['modifiedDate']) \
-                for file in self.ListFile({'q': "'root' in parents and trashed=false"}).GetList()]
+    def files_list(self, _id='root'):
+        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
+                for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
 
 class DBox(Dropbox):
     def used_storage_bytes(self):
         return self.users_get_space_usage().used
     def remaining_storage_bytes(self):
         return self.users_get_space_usage().allocation.get_individual().allocated - self.used_storage_bytes()
-    def files_list(self):
-        return [(file.name, str(type(file)), '?' if isinstance(file, FolderMetadata) else file.client_modified) \
-                for file in self.files_list_folder('').entries]
+    def files_list(self, _id=''):
+        return {file.id:(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y')) \
+                for file in self.files_list_folder(_id).entries}
 
 class Box(Client):
     def used_storage_bytes(self):
         return self.user().get().space_used
     def remaining_storage_bytes(self):
         return self.user().get().space_amount - self.used_storage_bytes()
-    def files_list(self):
-        return [(item.name, item.type, '?') \
-                for item in self.folder('0').get_items()]
+    def files_list(self, _id='0'):
+        return {item.id:(item.name, item.type, '?') \
+                for item in self.folder(_id).get_items()}
 
 class ODrive(OneDriveClient):
     def _quota_dict(self):
@@ -55,6 +55,6 @@ class ODrive(OneDriveClient):
         return self._quota_dict()['used']
     def remaining_storage_bytes(self):
         return self._quota_dict()['remaining']
-    def files_list(self):
-        return [(item.name, 'file' if item.folder == None else item.folder, item.last_modified_date_time) \
-                for item in self.item(drive='me', id='root').children.request().get()]
+    def files_list(self, _id='root'):
+        return {item.id:(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y')) \
+                for item in self.item(drive='me', id=_id).children.request().get()}
