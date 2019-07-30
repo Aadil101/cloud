@@ -52,7 +52,17 @@ def main():
 	for _ , drive in storage.items():
 		used_bytes += drive['used'] 
 		remaining_bytes += drive['remaining']
-	print('{} used of {} available'.format(print_bytes(used_bytes), print_bytes(used_bytes+remaining_bytes)))
+	###
+	'''
+	files = dump.files()
+	print('Your files:')
+	for _id, details in files.items():
+		drive_name = list(details.keys())[0]
+		(file_name, kind, date_modified) = details[drive_name]
+		print(''.join(word.ljust(20) for word in [file_name, kind, date_modified, drive_name, _id]))
+	'''
+	###
+	'''
 	#t0 = time.time()
 	files = dump.files()
 	print(files)
@@ -60,8 +70,32 @@ def main():
 	_id = '0B0Lnx0czKN_6ZmMwTW5KT3dGMFE'
 	print("I want file with id: " + _id)
 	_id_drive = dump.get_drive(list(files[_id].keys())[0])
-	_id_files = _id_drive.files_list(_id)
+	_id_files = _id_drive.files(_id)
 	print(_id_files)
-	
+	'''
+	###
+	#print('Your files:')
+	#files = dump.files()
+	#print(files)
+	###
+	stack = [(None, None)]
+	while True:
+		(curr_drive, curr_id) = stack[-1]
+		print('{} used of {} available'.format(print_bytes(used_bytes), print_bytes(used_bytes+remaining_bytes)))
+		files = dump.files(curr_drive, curr_id)
+		for _id, details in files.items():
+			drive_name = list(details.keys())[0]
+			(file_name, kind, date_modified) = details[drive_name]
+			print(''.join(word[:15].ljust(16) for word in [file_name, kind, date_modified, drive_name]))
+		next_id = input('gimme id: ')
+		if next_id == 'q': 
+			break
+		elif next_id == 'b':
+			if len(stack) > 1:
+				stack.pop()
+		elif next_id in files and next(iter(files[next_id].values()))[1]=='folder':
+			stack.append((list(files[next_id])[0], next_id))
+			print('-----------------------------------')
+
 if __name__ == '__main__':
     main()
