@@ -59,9 +59,9 @@ def main():
 	#print("time: "+str(time.time()-t0))
 	_id = '0B0Lnx0czKN_6ZmMwTW5KT3dGMFE'
 	print("I want file with id: " + _id)
-	_id_drive = dump.lookup[list(files[_id].keys())[0]]
+	_id_drive = dump.get_drive(list(files[_id].keys())[0])
 	_id_files = _id_drive.files_list(_id)
 	print(_id_files)
-
+	
 if __name__ == '__main__':
     main()
