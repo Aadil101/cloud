@@ -12,8 +12,10 @@ setup(
         'boxsdk',
         'onedrivesdk',
         'onedrivecmd',
-        'keyring',
         'requests',
         'datetime',
+        'keyring',
+        'absl-py',
+        'windows-curses',
     ],
 )
