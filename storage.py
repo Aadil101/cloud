@@ -39,22 +39,22 @@ class Dump:
                         if os.path.getsize(path) < self.lookup[drive].remaining_storage_bytes()-threshold:
                             if folder:
                                 if not self.lookup[drive].add_file(path, folder):
-                                    return 'RIP, \'{}\' already exists in \'{}\' of \'{}\''.format(ntpath.basename(path), folder, drive)
+                                    return 'RIP, \'{}\' already exists in this directory of \'{}\''.format(ntpath.basename(path), drive)
                             else:
                                 if not self.lookup[drive].add_file(path):
-                                    return 'RIP, \'{}\' already exists in the main directory of \'{}\''.format(ntpath.basename(path), drive)
+                                    return 'RIP, \'{}\' already exists in the root directory of \'{}\''.format(ntpath.basename(path), drive)
                         else:
-                            return 'RIP, there isn\'t enough space in \'{}\' for \'{}\'.'.format(drive, ntpath.basename(path))
+                            return 'RIP, there isn\'t enough space in \'{}\' for \'{}\''.format(drive, ntpath.basename(path))
                     else:
-                        return 'RIP, \'{}\' isn\'t a drive.'.format(drive)
+                        return 'RIP, \'{}\' isn\'t a drive'.format(drive)
                 else:
                     for _ , drive in self.lookup.items():
                         if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
                             if drive.add_file(path):
                                 return
-                    return 'RIP, there isn\'t enough space anywhere for \'{}\'.'.format(ntpath.basename(path))
+                    return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
         except IOError as _:
-            return 'RIP, file doesn\'t exist at \'{}\'.'.format(path)
+            return 'RIP, file doesn\'t exist at \'{}\''.format(path)
 
 class GDrive(GoogleDrive):
     def used_storage_bytes(self):

@@ -91,7 +91,7 @@ def show(stdscr):
 						if error:
 							stdscr.move(0, 0)
 							stdscr.clrtoeol()
-							prompt = error
+							prompt = error + ', try again: '
 						else:
 							break
 					else:
