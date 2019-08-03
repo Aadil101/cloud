@@ -7,12 +7,12 @@ from onedrivecmd.utils.actions import do_quota
 import requests
 import datetime
 import os
-from absl import flags
+#from absl import flags
 import ntpath
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_float('threshold', 1e6, 'how close to full a drive can be')
+#FLAGS = flags.FLAGS
+#flags.DEFINE_float('threshold', 1e6, 'how close to full a drive can be')
+threshold = 1e6
 
 class Dump:
     def __init__(self, lookup={}):
@@ -31,28 +31,30 @@ class Dump:
         for _ , drive in self.lookup.items():
             stuff.update(drive.files())
         return stuff
-    def add_file(self, path, drive=None):
+    def add_file(self, path, drive=None, folder=None):
         try:
             with open(path) as file:
                 if drive:
                     if drive in self.lookup:
-                        if os.path.getsize(file.name) < self.lookup[drive].remaining_storage_bytes()-FLAGS.threshold:
-                            self.lookup[drive].add_file(file.name)
+                        if os.path.getsize(path) < self.lookup[drive].remaining_storage_bytes()-threshold:
+                            if folder:
+                                if not self.lookup[drive].add_file(path, folder):
+                                    return 'RIP, \'{}\' already exists in \'{}\' of \'{}\''.format(ntpath.basename(path), folder, drive)
+                            else:
+                                if not self.lookup[drive].add_file(path):
+                                    return 'RIP, \'{}\' already exists in the main directory of \'{}\''.format(ntpath.basename(path), drive)
                         else:
-                            print('RIP, there isn\'t enough space in \'{}\' for \'{}\'.'.format(drive, ntpath.basename(file.name)))
+                            return 'RIP, there isn\'t enough space in \'{}\' for \'{}\'.'.format(drive, ntpath.basename(path))
                     else:
-                        print('RIP, \'{}\' isn\'t a drive.'.format(drive))
+                        return 'RIP, \'{}\' isn\'t a drive.'.format(drive)
                 else:
-                    added = False
                     for _ , drive in self.lookup.items():
-                        if os.path.getsize(file.name) < drive.remaining_storage_bytes()-FLAGS.threshold:
-                            drive.add_file(file.name)
-                            added = True
-                            break
-                    if not added:
-                        print('RIP, there isn\'t enough space anywhere for \'{}\'.'.format(ntpath.basename(file.name)))
+                        if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
+                            if drive.add_file(path):
+                                return
+                    return 'RIP, there isn\'t enough space anywhere for \'{}\'.'.format(ntpath.basename(path))
         except IOError as _:
-            print('RIP, file doesn\'t exist at \'{}\'.'.format(path))
+            return 'RIP, file doesn\'t exist at \'{}\'.'.format(path)
 
 class GDrive(GoogleDrive):
     def used_storage_bytes(self):
@@ -62,10 +64,16 @@ class GDrive(GoogleDrive):
     def files(self, _id='root'):
         return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
-    def add_file(self, path):
-        file = self.CreateFile({'title': ntpath.basename(path)})
-        file.SetContentFile(path)
-        file.Upload()
+    def add_file(self, path, folder='root'):
+        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        if ntpath.basename(path) in existing:
+            return False
+        else:
+            file = self.CreateFile({'title': ntpath.basename('data/for.txt'), 
+                                'parents': [{'kind': 'drive#fileLink', 'id': folder}]})
+            file.SetContentFile(path)
+            file.Upload()
+            return True
 
 class DBox(Dropbox):
     def used_storage_bytes(self):
@@ -75,9 +83,14 @@ class DBox(Dropbox):
     def files(self, _id=''):
         return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
                 for file in self.files_list_folder(_id).entries}
-    def add_file(self, path):
-        with open(path, 'rb') as file:
-            self.files_upload(file.read(), '')
+    def add_file(self, path, folder='/'):
+        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        if ntpath.basename(path) in existing:
+            return False
+        else:
+            with open(path, 'rb') as file:
+                self.files_upload(file.read(), os.path.join(folder, ntpath.basename(path)))
+            return True
 
 class Box(Client):
     def used_storage_bytes(self):
@@ -87,8 +100,13 @@ class Box(Client):
     def files(self, _id='0'):
         return {item.id:{'box':(item.name, item.type, '?')} \
                 for item in self.folder(_id).get_items()}
-    def add_file(self, path):
-        self.folder('0').upload(path)
+    def add_file(self, path, folder='0'):
+        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        if ntpath.basename(path) in existing:
+            return False
+        else:
+            self.folder(folder).upload(path)
+            return True
 
 class ODrive(OneDriveClient):
     def _quota_dict(self):
@@ -103,5 +121,10 @@ class ODrive(OneDriveClient):
     def files(self, _id='root'):
         return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
                 for item in self.item(drive='me', id=_id).children.request().get()}
-    def add_file(self, path):
-        self.item(drive='me', id='root').children[ntpath.basename(path)].upload(path)
+    def add_file(self, path, folder='root'):
+        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        if ntpath.basename(path) in existing:
+            return False
+        else:
+            self.item(drive='me', id=folder).children[ntpath.basename(path)].upload(path)
+            return True

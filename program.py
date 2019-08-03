@@ -17,7 +17,7 @@ def show(stdscr):
 	stdscr.keypad(True)
 	curses.curs_set(0)
 	###
-	''''
+	'''
 	storage = dump.storage()
 	used_bytes = 0
 	remaining_bytes = 0
@@ -39,9 +39,9 @@ def show(stdscr):
 		travel = 0
 		cursor = 1
 		stdscr.clear()
-		stdscr.refresh()
+		#stdscr.refresh()
 		while True:
-			(height, _) = stdscr.getmaxyx()
+			(height, width) = stdscr.getmaxyx()
 			for bag_i in range(0, min(len(bags), height-1)):
 				row = bag_i+1
 				if row == cursor:
@@ -62,21 +62,48 @@ def show(stdscr):
 					cursor -= 1
 				elif travel > 0:
 					travel -= 1
-			elif key == 10:
+			elif key == 10 or key == curses.KEY_ENTER or key == 13:
 				if bags[cursor+travel-1].lookup['kind'] == 'folder':
 					_id = bags[cursor+travel-1].lookup['_id']
 					page_history_stack.append((list(files[_id])[0], _id))
 					break
-			elif key == ord('b'):
+			elif key == curses.KEY_LEFT:
 				if len(page_history_stack) > 1:
 					page_history_stack.pop()
 					break
-			elif key == ord('q'):
+			elif key == 27:	# escape or alt
 				curses.nocbreak()
 				stdscr.keypad(False)
 				curses.echo()
 				curses.endwin()
 				return
+			elif key == ord('u'):
+				prompt = 'upload file: '
+				path = None
+				while path != '':
+					stdscr.refresh()
+					stdscr.addstr(0, 0, prompt)
+					curses.echo()
+					path = stdscr.getstr(width - len(prompt))
+					curses.noecho()
+					if os.path.exists(path):
+						error = dump.add_file(path, curr_drive, curr_id)
+						if error:
+							stdscr.move(0, 0)
+							stdscr.clrtoeol()
+							prompt = error
+						else:
+							break
+					else:
+						stdscr.move(0, 0)
+						stdscr.clrtoeol()
+						prompt = 'nope, try again: '
+				else:
+					stdscr.move(0, 0)
+					stdscr.clrtoeol()
+					stdscr.refresh()
+					continue
+				break
 			else:
 				stdscr.addstr(0, 0, 'uh-oh: {}\\'.format(key))
 def main():
