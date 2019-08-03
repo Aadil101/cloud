@@ -16,4 +16,4 @@ class Bag:
 		return self.lookup[key]
 	'''
     def __str__(self):
-        return ''.join(str(val).ljust(16) for _, val in self.lookup.items())
+        return ''.join(str(val)[:15].ljust(16) for _, val in self.lookup.items())
