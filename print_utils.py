@@ -7,3 +7,13 @@ def print_bytes(num_bytes):
 		return '{} mb'.format(int(round(1.0*num_bytes/1024**2)))
 	else:
 		return '{} gb'.format(int(round(1.0*num_bytes/1024**3)))
+
+class Bag:
+    def __init__(self, lookup={}):
+        self.lookup = lookup
+	'''
+	def get_item(self, key):
+		return self.lookup[key]
+	'''
+    def __str__(self):
+        return ''.join(str(val).ljust(16) for _, val in self.lookup.items())
