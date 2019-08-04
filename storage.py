@@ -31,29 +31,33 @@ class Dump:
         for _ , drive in self.lookup.items():
             stuff.update(drive.files())
         return stuff
+    def add_folder(self, path, drive=None, folder=None):
+        if os.path.isdir(path):
+            print('lolz not implemented')
+        else:
+            return 'RIP, folder doesn\'t exist at \'{}\''.format(path)
     def add_file(self, path, drive=None, folder=None):
-        try:
-            with open(path) as file:
-                if drive:
-                    if drive in self.lookup:
-                        if os.path.getsize(path) < self.lookup[drive].remaining_storage_bytes()-threshold:
-                            if folder:
-                                if not self.lookup[drive].add_file(path, folder):
-                                    return 'RIP, \'{}\' already exists in this directory of \'{}\''.format(ntpath.basename(path), drive)
-                            else:
-                                if not self.lookup[drive].add_file(path):
-                                    return 'RIP, \'{}\' already exists in the root directory of \'{}\''.format(ntpath.basename(path), drive)
+        if os.path.isfile(path):
+            if drive:
+                if drive in self.lookup:
+                    if os.path.getsize(path) < self.lookup[drive].remaining_storage_bytes()-threshold:
+                        if folder:
+                            if not self.lookup[drive].add_file(path, folder):
+                                return 'RIP, \'{}\' already exists in this directory of \'{}\''.format(ntpath.basename(path), drive)
                         else:
-                            return 'RIP, there isn\'t enough space in \'{}\' for \'{}\''.format(drive, ntpath.basename(path))
+                            if not self.lookup[drive].add_file(path):
+                                return 'RIP, \'{}\' already exists in the root directory of \'{}\''.format(ntpath.basename(path), drive)
                     else:
-                        return 'RIP, \'{}\' isn\'t a drive'.format(drive)
+                        return 'RIP, there isn\'t enough space in \'{}\' for \'{}\''.format(drive, ntpath.basename(path))
                 else:
-                    for _ , drive in self.lookup.items():
-                        if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
-                            if drive.add_file(path):
-                                return
-                    return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
-        except IOError as _:
+                    return 'RIP, \'{}\' isn\'t a drive'.format(drive)
+            else:
+                for _ , drive in self.lookup.items():
+                    if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
+                        if drive.add_file(path):
+                            return
+                return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
+        else:
             return 'RIP, file doesn\'t exist at \'{}\''.format(path)
 
 class GDrive(GoogleDrive):
@@ -83,13 +87,13 @@ class DBox(Dropbox):
     def files(self, _id=''):
         return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
                 for file in self.files_list_folder(_id).entries}
-    def add_file(self, path, folder='/'):
+    def add_file(self, path, folder=''):
         existing = {list(file.values())[0][0] for file in self.files(folder).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
             with open(path, 'rb') as file:
-                self.files_upload(file.read(), os.path.join(folder, ntpath.basename(path)))
+                self.files_upload(file.read(), os.path.join(folder, '/', ntpath.basename(path)))
             return True
 
 class Box(Client):
