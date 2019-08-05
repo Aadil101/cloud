@@ -1,5 +1,6 @@
-from boxsdk import Client, OAuth2
+from boxsdk import OAuth2
 import keyring
+from storage import Box
 
 oauth = OAuth2(
     client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
@@ -8,9 +9,6 @@ oauth = OAuth2(
     refresh_token=keyring.get_password('Box_Refresh', 'aadilislam101@gmail.com')
 )
 
-client = Client(oauth)
-user = client.user().get()
-policies = client.get_storage_policies()
-print(type(policies))
-# box object collection, specifically marker based object collection
-print(client.user().get().space_amount)
+box = Box(oauth)
+files = box.files()
+print(vars(box.folder('0').create_subfolder('holder')))

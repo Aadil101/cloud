@@ -32,7 +32,8 @@ def sizeof_fmt(num, suffix = 'B'):
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
-
+###
+'''
 access_token = str(client.auth_provider.access_token)
 req = requests.get(client.base_url + 'drive/',
                        headers = {
@@ -40,3 +41,21 @@ req = requests.get(client.base_url + 'drive/',
                            'content-type': 'application/json'})
 total = req.json()['quota']['total']
 print(total)
+'''
+###
+'''
+items = client.item(drive='me', id='root').children.request().get()
+#print(item[0].name)
+#print(item[0].last_modified_date_time)
+print(items[0].name)
+print(items[0].id)
+data_items = client.item(drive='me', id = items[0].id).children.request().get()
+print(data_items[0].name)
+'''
+###
+#client.item(drive='me', id='716A584AD037E10F%21539').children['hey_mod.txt'].upload('data/hey.txt')
+#folder = onedrivesdk.Folder()
+item = onedrivesdk.Item({'name':'holder', 'folder':onedrivesdk.Folder()})
+#item.name = 'holder'
+#item.folder = folder
+print(client.item(drive='me', id='root').children.add(item).id)
