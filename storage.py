@@ -21,21 +21,21 @@ threshold = 1e6
 class Dump:
     def __init__(self, lookup={}):
         self.lookup = lookup
-    def add_drive(self, drive, name):
-        self.lookup[name] = drive
-    def get_drive(self, name):
-        return self.lookup[name]
+    def add_drive(self, drive, drive_name):
+        self.lookup[drive_name] = drive
+    def get_drive(self, drive_name):
+        return self.lookup[drive_name]
     def storage(self):
-        return {name:{"used":drive.used_storage_bytes(), "remaining":drive.remaining_storage_bytes()} \
-                for name, drive in self.lookup.items()}
-    def files(self, drive=None, _id=None):
-        if drive and _id:
-            return self.lookup[drive].files(_id)
+        return {drive_name:{"used":drive.used_storage_bytes(), "remaining":drive.remaining_storage_bytes()} \
+                for drive_name, drive in self.lookup.items()}
+    def files(self, drive_name=None, _id=None):
+        if drive_name and _id:
+            return self.get_drive(drive_name).files(_id)
         stuff = {}
-        for _ , drive in self.lookup.items():
-            stuff.update(drive.files())
+        for drive_name in self.lookup:
+            stuff.update(self.get_drive(drive_name).files())
         return stuff
-    def add_folder(self, path, drive=None, folder=None, size_check=True):
+    def add_folder(self, path, drive_name=None, folder=None, size_check=True):
         if os.path.isdir(path):
             # optionally check size of directory
             size = 0
@@ -48,50 +48,55 @@ class Dump:
                         if not os.path.islink(local_path):
                             size += os.path.getsize(local_path)
             # try to upload directory
-            if drive:
-                if not size_check or size < self.lookup[drive].remaining_storage_bytes()-threshold:
-                    path_to_id = {}
-                    if folder:
-                        path_to_id[os.path.join(folder, ntpath.basename(path))] = self.lookup[drive].add_folder(path, folder)
-                    else:
-                        path_to_id[ntpath.basename(path)] = self.lookup[drive].add_folder(path)
-                    for root, dirs, files in os.walk(path):
-                        local = root[root.find(ntpath.basename(path)):]
-                        for _dir in dirs:
-                            if folder:
-                                path_to_id[os.path.join(folder, local, _dir)] = self.lookup[drive].add_folder(os.path.join(root, _dir), path_to_id[os.path.join(folder, local)])
-                            else:
-                                path_to_id[os.path.join(local, _dir)] = self.lookup[drive].add_folder(os.path.join(root, _dir), path_to_id[local])
-                        for file in files:
-                            if not file.startswith('.'):
+            if drive_name:
+                if drive_name in self.lookup:
+                    drive = self.get_drive(drive_name)
+                    if not size_check or size < drive.remaining_storage_bytes()-threshold:
+                        path_to_id = {}
+                        if folder:
+                            path_to_id[os.path.join(folder, ntpath.basename(path))] = drive.add_folder(path, folder)
+                        else:
+                            path_to_id[ntpath.basename(path)] = drive.add_folder(path)
+                        for root, dirs, files in os.walk(path):
+                            local = root[root.find(ntpath.basename(path)):]
+                            for _dir in dirs:
                                 if folder:
-                                    self.lookup[drive].add_file(os.path.join(root, file), path_to_id[os.path.join(folder, local)])
+                                    path_to_id[os.path.join(folder, local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[os.path.join(folder, local)])
                                 else:
-                                    self.lookup[drive].add_file(os.path.join(root, file), path_to_id[local])
+                                    path_to_id[os.path.join(local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[local])
+                            for file in files:
+                                if not file.startswith('.'):
+                                    if folder:
+                                        drive.add_file(os.path.join(root, file), path_to_id[os.path.join(folder, local)])
+                                    else:
+                                        drive.add_file(os.path.join(root, file), path_to_id[local])
+                    else:
+                        return 'RIP, \'{}\' can\'t fit in \'{}\''.format(ntpath.basename(path, drive_name))
                 else:
-                    return 'RIP, \'{}\' can\'t fit in \'{}\''.format(ntpath.basename(path, drive))
+                    return 'RIP, \'{}\' isn\'t a drive'.format(drive_name)
             else:
-                for _ , drive in self.lookup.items():
-                    if size < drive.remaining_storage_bytes()-threshold:
-                        return self.add_folder(path, drive, size_check=False)
+                for _drive_name, _drive in self.lookup.items():
+                    if size < _drive.remaining_storage_bytes()-threshold:
+                        return self.add_folder(path, _drive_name, None, False)
                 return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
         else:
             return 'RIP, folder doesn\'t exist at \'{}\''.format(path)
-    def add_file(self, path, drive=None, folder=None):
+    def add_file(self, path, drive_name=None, folder=None):
         if os.path.isfile(path):
-            if drive:
-                if drive in self.lookup:
-                    if os.path.getsize(path) < self.lookup[drive].remaining_storage_bytes()-threshold:
+            if drive_name:
+                if drive_name in self.lookup:
+                    drive = self.get_drive(drive_name)
+                    if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
                         if folder:
-                            if not self.lookup[drive].add_file(path, folder):
-                                return 'RIP, \'{}\' already exists in this directory of \'{}\''.format(ntpath.basename(path), drive)
+                            if not drive.add_file(path, folder):
+                                return 'RIP, \'{}\' already exists in this directory of \'{}\''.format(ntpath.basename(path), drive_name)
                         else:
-                            if not self.lookup[drive].add_file(path):
-                                return 'RIP, \'{}\' already exists in the root directory of \'{}\''.format(ntpath.basename(path), drive)
+                            if not drive.add_file(path):
+                                return 'RIP, \'{}\' already exists in the root directory of \'{}\''.format(ntpath.basename(path), drive_name)
                     else:
-                        return 'RIP, there isn\'t enough space in \'{}\' for \'{}\''.format(drive, ntpath.basename(path))
+                        return 'RIP, there isn\'t enough space in \'{}\' for \'{}\''.format(drive_name, ntpath.basename(path))
                 else:
-                    return 'RIP, \'{}\' isn\'t a drive'.format(drive)
+                    return 'RIP, \'{}\' isn\'t a drive'.format(drive_name)
             else:
                 for _ , drive in self.lookup.items():
                     if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:

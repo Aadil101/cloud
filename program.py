@@ -92,6 +92,7 @@ def show(stdscr):
 							error = dump.add_file(path, curr_drive, curr_id)
 						elif os.path.isdir(path):
 							error = dump.add_folder(path, curr_drive, curr_id)
+							
 						if error:
 							stdscr.move(0, 0)
 							stdscr.clrtoeol()
@@ -110,6 +111,7 @@ def show(stdscr):
 				break
 			else:
 				stdscr.addstr(0, 0, 'uh-oh: {}\\'.format(key))
+#data/in_a_world
 def main():
 	global dump
 	###
