@@ -1,21 +1,17 @@
-from pydrive.drive import GoogleDrive
+from boxsdk import Client
+import datetime
 from dropbox import Dropbox
 from dropbox.files import FolderMetadata
-from boxsdk import Client
+import ntpath
 import onedrivesdk
 from onedrivesdk import OneDriveClient
 from onedrivecmd.utils.actions import do_quota
-import requests
-import datetime
 import os
+from pydrive.drive import GoogleDrive
+import requests
 import sys
-#from absl import flags
-import ntpath
 
-#sys.stdout = open('message.log', 'w')
-
-#FLAGS = flags.FLAGS
-#flags.DEFINE_float('threshold', 1e6, 'how close to full a drive can be')
+# constants
 threshold = 1e6
 
 class Dump:
@@ -35,6 +31,8 @@ class Dump:
         for drive_name in self.lookup:
             stuff.update(self.get_drive(drive_name).files())
         return stuff
+    def download_file(self, drive_name, _id, path):
+        self.get_drive(drive_name).download_file(_id, path)
     def add_folder(self, path, drive_name=None, folder=None, size_check=True):
         if os.path.isdir(path):
             # optionally check size of directory
@@ -106,6 +104,13 @@ class Dump:
         else:
             return 'RIP, file doesn\'t exist at \'{}\''.format(path)
 
+mimetypes = {
+    # Drive google-apps files as MS files.
+    'application/vnd.google-apps.document': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
+    'application/vnd.google-apps.spreadsheet': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+    'application/vnd.google-apps.presentation': ('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
+}
+
 class GDrive(GoogleDrive):
     def used_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesByService'][0]['bytesUsed'])
@@ -114,6 +119,13 @@ class GDrive(GoogleDrive):
     def files(self, _id='root'):
         return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
+    def download_file(self, _id, path):
+        file = self.CreateFile({'id': _id})
+        if file['mimeType'] in mimetypes:
+            download_type, download_ext = mimetypes[file['mimeType']]
+            file.GetContentFile(os.path.join(path, file['title']+download_ext), mimetype=download_type)
+        else:
+            file.GetContentFile(os.path.join(path, file['title']), mimetype=file['mimeType'])
     def add_folder(self, path, folder='root'):
         folder_metadata = {'title':ntpath.basename(path), 'mimeType':'application/vnd.google-apps.folder',
                             'parents':[{'id':folder}]}
@@ -139,6 +151,9 @@ class DBox(Dropbox):
     def files(self, _id=''):
         return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
                 for file in self.files_list_folder(_id).entries}
+    def download_file(self, _id, path):
+        meta = self.files_get_metadata(_id)
+        self.files_download_to_file(os.path.join(path, meta.name), _id)
     def add_folder(self, path, folder=''):
         new_path = os.path.join(folder, ntpath.basename(path), 'test.txt')
         self.files_upload(None, new_path)
@@ -163,6 +178,11 @@ class Box(Client):
     def files(self, _id='0'):
         return {item.id:{'box':(item.name, item.type, '?')} \
                 for item in self.folder(_id).get_items()}
+    def download_file(self, _id, path):
+        file = self.file(_id)
+        with open(os.path.join(path, file.get().name), 'wb') as out_file:
+            file.download_to(out_file)
+            out_file.close()
     def add_folder(self, path, folder='0'):
         return self.folder(folder).create_subfolder(ntpath.basename(path)).id
     def add_file(self, path, folder='0'):
@@ -185,6 +205,9 @@ class ODrive(OneDriveClient):
     def files(self, _id='root'):
         return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
                 for item in self.item(drive='me', id=_id).children.request().get()}
+    def download_file(self, _id, path):
+        item = self.item(id=_id)
+        item.download(os.path.join(path, '/', item.name))
     def add_folder(self, path, folder='root'):
         item = onedrivesdk.Item({'name':ntpath.basename(path), 'folder':onedrivesdk.Folder()})
         return self.item(drive='me', id=folder).children.add(item).id
@@ -195,3 +218,9 @@ class ODrive(OneDriveClient):
         else:
             self.item(drive='me', id=folder).children[ntpath.basename(path)].upload(path)
             return True
+
+'''
+    #from absl import flags
+    #FLAGS = flags.FLAGS
+    #flags.DEFINE_float('threshold', 1e6, 'how close to full a drive can be')
+'''
