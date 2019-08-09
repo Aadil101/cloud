@@ -9,11 +9,11 @@ def print_bytes(num_bytes):
 		return '{} gb'.format(int(round(1.0*num_bytes/1024**3)))
 
 class Bag:
-    def __init__(self, lookup={}):
-        self.lookup = lookup
-	'''
-	def get_item(self, key):
-		return self.lookup[key]
-	'''
-    def __str__(self):
-        return ''.join(str(val)[:15].ljust(16) for _, val in self.lookup.items())
+	def __init__(self, lookup={}):
+		self.lookup = lookup
+	def get(self, name):
+		return self.lookup[name]
+	def __str__(self):
+		num_chars = 15
+		
+		return ''.join(value.encode('utf-8')[:num_chars].ljust(num_chars+1) for _, value in self.lookup.items())
