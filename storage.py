@@ -5,7 +5,6 @@ from dropbox.files import FolderMetadata
 import ntpath
 import onedrivesdk
 from onedrivesdk import OneDriveClient
-from onedrivecmd.utils.actions import do_quota
 import os
 from pydrive.drive import GoogleDrive
 import requests
@@ -24,6 +23,8 @@ class Dump:
     def storage(self):
         return {drive_name:{"used":drive.used_storage_bytes(), "remaining":drive.remaining_storage_bytes()} \
                 for drive_name, drive in self.lookup.items()}
+    def query(self, name):
+        print('lolz')
     def files(self, drive_name=None, _id=None):
         if drive_name and _id:
             return self.get_drive(drive_name).files(_id)
@@ -33,6 +34,10 @@ class Dump:
         return stuff
     def download_file(self, drive_name, _id, path):
         self.get_drive(drive_name).download_file(_id, path)
+    def delete_folder(self, drive_name, _id):
+        self.get_drive(drive_name).delete_folder(_id)
+    def delete_file(self, drive_name, _id):
+        self.get_drive(drive_name).delete_file(_id)
     def add_folder(self, path, drive_name=None, folder=None, size_check=True):
         if os.path.isdir(path):
             # optionally check size of directory
@@ -105,7 +110,7 @@ class Dump:
             return 'RIP, file doesn\'t exist at \'{}\''.format(path)
 
 mimetypes = {
-    # Drive google-apps files as MS files.
+    # google-apps files as MS files
     'application/vnd.google-apps.document': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
     'application/vnd.google-apps.spreadsheet': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
     'application/vnd.google-apps.presentation': ('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
@@ -116,6 +121,9 @@ class GDrive(GoogleDrive):
         return int(self.GetAbout()['quotaBytesByService'][0]['bytesUsed'])
     def remaining_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesTotal']) - self.used_storage_bytes()
+    def query(self, query):
+        return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.ptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
+                for file in self.ListFile({'q': 'trashed=false and title="{}"'}.format(query)).GetList()}
     def files(self, _id='root'):
         return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
@@ -126,6 +134,12 @@ class GDrive(GoogleDrive):
             file.GetContentFile(os.path.join(path, file['title']+download_ext), mimetype=download_type)
         else:
             file.GetContentFile(os.path.join(path, file['title']), mimetype=file['mimeType'])
+    def delete_folder(self, _id):
+        file = self.CreateFile({'id': _id})
+        file.Trash()
+    def delete_file(self, _id):
+        file = self.CreateFile({'id': _id})
+        file.Trash()
     def add_folder(self, path, folder='root'):
         folder_metadata = {'title':ntpath.basename(path), 'mimeType':'application/vnd.google-apps.folder',
                             'parents':[{'id':folder}]}
@@ -148,12 +162,19 @@ class DBox(Dropbox):
         return self.users_get_space_usage().used
     def remaining_storage_bytes(self):
         return self.users_get_space_usage().allocation.get_individual().allocated - self.used_storage_bytes()
+    def query(self, query):
+        return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
+                for file in self.files_search('', query)}
     def files(self, _id=''):
         return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
                 for file in self.files_list_folder(_id).entries}
     def download_file(self, _id, path):
         meta = self.files_get_metadata(_id)
         self.files_download_to_file(os.path.join(path, meta.name), _id)
+    def delete_folder(self, _id):
+        self.delete(_id)
+    def delete_file(self, _id):
+        self.delete(_id)
     def add_folder(self, path, folder=''):
         new_path = os.path.join(folder, ntpath.basename(path), 'test.txt')
         self.files_upload(None, new_path)
@@ -175,6 +196,9 @@ class Box(Client):
         return self.user().get().space_used
     def remaining_storage_bytes(self):
         return self.user().get().space_amount - self.used_storage_bytes()
+    def query(self, query):
+        return {item.id:{'box':(item.name, item.type, '?')} \
+                for item in self.search().query(query)}
     def files(self, _id='0'):
         return {item.id:{'box':(item.name, item.type, '?')} \
                 for item in self.folder(_id).get_items()}
@@ -183,6 +207,10 @@ class Box(Client):
         with open(os.path.join(path, file.get().name), 'wb') as out_file:
             file.download_to(out_file)
             out_file.close()
+    def delete_folder(self, _id):
+        self.file(_id).delete()
+    def delete_file(self, _id):
+        self.folder(_id).delete()
     def add_folder(self, path, folder='0'):
         return self.folder(folder).create_subfolder(ntpath.basename(path)).id
     def add_file(self, path, folder='0'):
@@ -202,12 +230,18 @@ class ODrive(OneDriveClient):
         return self._quota_dict()['used']
     def remaining_storage_bytes(self):
         return self._quota_dict()['remaining']
+    def query(self, query):
+        print('hello')
     def files(self, _id='root'):
         return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
                 for item in self.item(drive='me', id=_id).children.request().get()}
     def download_file(self, _id, path):
-        item = self.item(id=_id)
-        item.download(os.path.join(path, '/', item.name))
+        item = self.item(drive='me', id=_id)
+        item.download(os.path.join(path, item.request().get().name))
+    def delete_folder(self, _id):
+        self.item(id=_id).delete()
+    def delete_file(self, _id):
+        self.item(id=_id).delete()
     def add_folder(self, path, folder='root'):
         item = onedrivesdk.Item({'name':ntpath.basename(path), 'folder':onedrivesdk.Folder()})
         return self.item(drive='me', id=folder).children.add(item).id

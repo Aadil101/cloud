@@ -1,13 +1,12 @@
 from boxsdk import OAuth2
 import curses
 import keyring
-from onedrivesdk import HttpProvider, AuthProvider
-from onedrivecmd.utils.actions import do_quota
+from onedrivesdk import AuthProvider, HttpProvider
 import os
-from print_utils import print_bytes, Bag
+from print_utils import Bag, Completer, print_bytes
 from pydrive.auth import GoogleAuth
-import requests
-from storage import Dump, GDrive, DBox, Box, ODrive
+import readline
+from storage import Box, Dump, DBox, GDrive, ODrive
 import sys
 import time
 
@@ -28,6 +27,10 @@ def display(stdscr):
 	stdscr.keypad(True)	# go ahead, type
 	curses.curs_set(0)	# but no cursor for you 
 	page_history_stack = [(None, None)]	# bunch of (drive_name, folder_id) tuples
+	comp = Completer()	# for autocompletion
+	readline.set_completer_delims(' \t\n;')
+	readline.parse_and_bind('tab: complete')
+	readline.set_completer(comp.complete)
 	while True:
 		(curr_drive, curr_folder_id) = page_history_stack[-1]
 		# get stuff in current folder
@@ -41,6 +44,7 @@ def display(stdscr):
 		# the show begins
 		travel = 0
 		cursor = 1
+		reverse = False
 		stdscr.clear()
 		while True:
 			(disp_height, disp_width) = stdscr.getmaxyx()
@@ -59,7 +63,7 @@ def display(stdscr):
 				if cursor < disp_height-1:
 					if cursor < len(bags):
 						cursor += 1
-				elif travel < len(bags)-disp_height:
+				elif travel < len(bags)-disp_height+1:
 					travel += 1
 			# scroll up
 			elif key == curses.KEY_UP:
@@ -69,8 +73,8 @@ def display(stdscr):
 					travel -= 1
 			# enter folder
 			elif key == 10 or key == curses.KEY_ENTER or key == 13:
-				if bags[cursor+travel-1].lookup['kind'] == 'folder':
-					_id = bags[cursor+travel-1].lookup['_id']
+				if bags[cursor+travel-1].get('kind') == 'folder':
+					_id = bags[cursor+travel-1].get('_id')
 					page_history_stack.append((list(files[_id])[0], _id))
 					break
 			# retreat
@@ -85,38 +89,99 @@ def display(stdscr):
 				curses.echo()
 				curses.endwin()
 				return
-			# download item
+			# delete file
+			elif key == curses.KEY_BACKSPACE or key == 127:
+				prompt = 'delete \'{}\' (y/n)'.format(bags[cursor+travel-1].get('name'))
+				char = None
+				while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+					status_line(stdscr, prompt)
+					char = stdscr.getch()
+					if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+						# yes
+						if char == 121:
+							# delete
+							if bags[cursor+travel-1].get('kind') == 'file':
+								status_line(stdscr, '...')
+								dump.delete_file(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'))
+							elif bags[cursor+travel-1].get('kind') == 'folder':
+								status_line(stdscr, '...')
+								dump.delete_folder(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'))
+							break
+						# otherwise
+						else:
+							prompt = 'nope, try again (y/n)'
+				else:
+					status_line(stdscr, '')
+					continue
+				status_line(stdscr, '')
+				break
+			# search
+			elif key == ord('s'):
+				print('lolz not implemented')
+			# download
 			elif key == ord('d'):
-				if bags[cursor+travel-1].lookup['kind'] == 'file':
+				if bags[cursor+travel-1].get('kind') == 'file':
 					status_line(stdscr, '...')
-					dump.download_file(bags[cursor+travel-1].lookup['drive_name'], bags[cursor+travel-1].lookup['_id'], '/Users/pickle/Downloads/')
-					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].lookup['name'].encode('utf-8')))
+					dump.download_file(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'), '/Users/pickle/Downloads/')
+					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('name')))
 			# upload item
 			elif key == ord('u'):
-				prompt = 'upload file: '
+				prompt = 'upload: '
 				path = None
+				completer = Completer()
+				# invalid path loop
 				while path != '':
-					status_line(stdscr, prompt)
-					curses.echo()
-					path = stdscr.getstr(disp_width - len(prompt))
-					curses.noecho()
-					if os.path.exists(path):
-						error = None
-						status_line(stdscr, '...')
-						if os.path.isfile(path):
-							error = dump.add_file(path, curr_drive, curr_folder_id)
-						elif os.path.isdir(path):
-							error = dump.add_folder(path, curr_drive, curr_folder_id)
-						if error:
-							prompt = error + ', try again: '
-						else:
+					if not path:
+						path = ''
+					# print path char-by-char loop
+					while True:
+						status_line(stdscr, prompt)
+						stdscr.addstr(path)
+						char = stdscr.getch()
+						if char == 127:
+							path = path[:-1]
+						# tab
+						elif char == 9:
+							matches = completer.complete(path)
+							if matches and len(matches) == 1:
+								path = matches[0]
+						# enter
+						elif char == curses.KEY_ENTER or char == 10 or char == 13:
 							break
-					else:
-						prompt = 'nope, try again: '
+						# character
+						else:
+							path += chr(char)
+					path = os.path.expanduser(path)
+					if path != '':
+						if os.path.exists(path):
+							error = None
+							status_line(stdscr, '...')
+							if os.path.isfile(path):
+								error = dump.add_file(path, curr_drive, curr_folder_id)
+							elif os.path.isdir(path):
+								error = dump.add_folder(path.strip('/'), curr_drive, curr_folder_id)
+							if error:
+								prompt = error + ', try again: '
+							else:
+								break
+						else:
+							prompt = 'nope, try again: '
 				else:
 					status_line(stdscr, '')
 					continue
 				break
+			elif key == ord('1'):
+				bags.sort(key=lambda bag: bag.get('kind'), reverse=reverse)
+				reverse = not reverse
+			elif key == ord('2'):
+				bags.sort(key=lambda bag: bag.get('name').lower(), reverse=reverse)
+				reverse = not reverse
+			elif key == ord('3'):
+				bags.sort(key=lambda bag: bag.get('drive_name'), reverse=reverse)
+				reverse = not reverse
+			elif key == ord('4'):
+				bags.sort(key=lambda bag: bag.get('date_modified'), reverse=reverse)
+				reverse = not reverse
 			else:
 				stdscr.addstr(0, 0, 'uh-oh: {}\\'.format(key))
 

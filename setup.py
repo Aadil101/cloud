@@ -11,11 +11,11 @@ setup(
         'dropbox',
         'boxsdk',
         'onedrivesdk',
-        'onedrivecmd',
+        'O365',
         'requests',
         'datetime',
         'keyring',
         'absl-py',
-        'windows-curses',
+        'cursor',
     ],
 )
