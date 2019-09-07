@@ -40,6 +40,7 @@ class Dump:
         self.get_drive(drive_name).delete_file(_id)
     def add_folder(self, path, drive_name=None, folder=None, size_check=True):
         if os.path.isdir(path):
+            path = path.rstrip('/')
             # optionally check size of directory
             size = 0
             if size_check:    

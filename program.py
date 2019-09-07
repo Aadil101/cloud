@@ -63,7 +63,7 @@ def display(stdscr):
 				if cursor < disp_height-1:
 					if cursor < len(bags):
 						cursor += 1
-				elif travel < len(bags)-disp_height+1:
+				elif travel < len(bags)-(disp_height-1):
 					travel += 1
 			# scroll up
 			elif key == curses.KEY_UP:
@@ -138,6 +138,7 @@ def display(stdscr):
 						status_line(stdscr, prompt)
 						stdscr.addstr(path)
 						char = stdscr.getch()
+						# delete
 						if char == 127:
 							path = path[:-1]
 						# tab
@@ -159,7 +160,7 @@ def display(stdscr):
 							if os.path.isfile(path):
 								error = dump.add_file(path, curr_drive, curr_folder_id)
 							elif os.path.isdir(path):
-								error = dump.add_folder(path.strip('/'), curr_drive, curr_folder_id)
+								error = dump.add_folder(path, curr_drive, curr_folder_id)
 							if error:
 								prompt = error + ', try again: '
 							else:
