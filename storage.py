@@ -23,8 +23,14 @@ class Dump:
     def storage(self):
         return {drive_name:{"used":drive.used_storage_bytes(), "remaining":drive.remaining_storage_bytes()} \
                 for drive_name, drive in self.lookup.items()}
-    def query(self, name):
-        print('lolz')
+    def query(self, query, drive_name=None):
+        if drive_name:
+            return self.get_drive(drive_name).query(query)
+        else:
+            files = {}
+            for _ , drive in self.lookup.items():
+                files.update(drive.query(query))
+            return files
     def files(self, drive_name=None, _id=None):
         if drive_name and _id:
             return self.get_drive(drive_name).files(_id)
@@ -123,8 +129,8 @@ class GDrive(GoogleDrive):
     def remaining_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesTotal']) - self.used_storage_bytes()
     def query(self, query):
-        return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.ptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
-                for file in self.ListFile({'q': 'trashed=false and title="{}"'}.format(query)).GetList()}
+        return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
+                for file in self.ListFile({'q': 'trashed=false and title="{}"'.format(query)}).GetList()}
     def files(self, _id='root'):
         return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
@@ -164,8 +170,8 @@ class DBox(Dropbox):
     def remaining_storage_bytes(self):
         return self.users_get_space_usage().allocation.get_individual().allocated - self.used_storage_bytes()
     def query(self, query):
-        return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
-                for file in self.files_search('', query)}
+        return {file.metadata.id:{'dropbox':(file.metadata.name, 'folder' if isinstance(file.metadata, FolderMetadata) else 'file', '?' if isinstance(file.metadata, FolderMetadata) else file.metadata.client_modified.strftime('%m/%d/%y'))} \
+                for file in self.files_search('', query).matches}
     def files(self, _id=''):
         return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
                 for file in self.files_list_folder(_id).entries}
@@ -232,7 +238,8 @@ class ODrive(OneDriveClient):
     def remaining_storage_bytes(self):
         return self._quota_dict()['remaining']
     def query(self, query):
-        print('hello')
+        return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
+                for item in self.item(drive='me', id='root').search(q=query).get().items()}
     def files(self, _id='root'):
         return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
                 for item in self.item(drive='me', id=_id).children.request().get()}

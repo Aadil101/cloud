@@ -5,7 +5,6 @@ from onedrivesdk import AuthProvider, HttpProvider
 import os
 from print_utils import Bag, Completer, print_bytes
 from pydrive.auth import GoogleAuth
-import readline
 from storage import Box, Dump, DBox, GDrive, ODrive
 import sys
 import time
@@ -28,9 +27,6 @@ def display(stdscr):
 	curses.curs_set(0)	# but no cursor for you 
 	page_history_stack = [(None, None)]	# bunch of (drive_name, folder_id) tuples
 	comp = Completer()	# for autocompletion
-	readline.set_completer_delims(' \t\n;')
-	readline.parse_and_bind('tab: complete')
-	readline.set_completer(comp.complete)
 	while True:
 		(curr_drive, curr_folder_id) = page_history_stack[-1]
 		# get stuff in current folder
@@ -99,7 +95,7 @@ def display(stdscr):
 					if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
 						# yes
 						if char == 121:
-							# delete
+							# delete it
 							if bags[cursor+travel-1].get('kind') == 'file':
 								status_line(stdscr, '...')
 								dump.delete_file(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'))
@@ -117,7 +113,70 @@ def display(stdscr):
 				break
 			# search
 			elif key == ord('s'):
-				print('lolz not implemented')
+				prompt = 'search: '
+				query = None
+				search_bags = []
+				while query != '':
+					search_travel = 0
+					search_cursor = 1
+					if not query:
+						query = ''
+					# print path char-by-char loop
+					while True:
+						# show as much stuff in current folder as possible
+						for seach_bag_i in range(0, min(len(search_bags), disp_height-1)):
+							row = seach_bag_i+1
+							if row == search_cursor:
+								stdscr.addstr(row, 0, str(search_bags[seach_bag_i+search_travel]), curses.A_STANDOUT)	# cursor 
+							else:
+								stdscr.addstr(row, 0, str(search_bags[seach_bag_i+search_travel]))
+						status_line(stdscr, prompt)
+						stdscr.addstr(query)
+						char = stdscr.getch()
+						# delete
+						if char == 127:
+							query = query[:-1]
+						# enter
+						elif char == curses.KEY_ENTER or char == 10 or char == 13:
+							break
+						# scroll down
+						elif char == curses.KEY_DOWN:
+							if search_cursor < disp_height-1:
+								if search_cursor < len(search_bags):
+									search_cursor += 1
+							elif search_travel < len(search_bags)-(disp_height-1):
+								search_travel += 1
+						# scroll up
+						elif char == curses.KEY_UP:
+							if search_cursor > 1:
+								search_cursor -= 1
+							elif search_travel > 0:
+								search_travel -= 1
+						# exit
+						elif char == 27:
+							query = ''
+							break
+						# character
+						else:
+							query += chr(char)
+					if query != '':
+						status_line(stdscr, '...')
+						files = dump.query(query)
+						search_bags = []
+						for file_id, file_details in files.items():
+							drive_name = list(file_details.keys())[0]
+							(name, kind, date_modified) = file_details[drive_name]
+							search_bags.append(Bag({'kind':kind, 'name':name, 'date_modified':date_modified, 'drive_name':drive_name, '_id':file_id}))
+						stdscr.clear()
+				else:
+					stdscr.clear()
+					for bag_i in range(0, min(len(bags), disp_height-1)):
+						row = bag_i+1
+						if row == cursor:
+							stdscr.addstr(row, 0, str(bags[bag_i+travel]), curses.A_STANDOUT)	# cursor 
+						else:
+							stdscr.addstr(row, 0, str(bags[bag_i+travel]))
+					stdscr.refresh()
 			# download
 			elif key == ord('d'):
 				if bags[cursor+travel-1].get('kind') == 'file':
@@ -148,6 +207,10 @@ def display(stdscr):
 								path = matches[0]
 						# enter
 						elif char == curses.KEY_ENTER or char == 10 or char == 13:
+							break
+						# exit
+						elif char == 27:
+							path = ''
 							break
 						# character
 						else:
