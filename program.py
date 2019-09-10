@@ -252,7 +252,7 @@ def display(stdscr):
 def boot():
 	# onedrive authentication
 	http_provider = HttpProvider()
-	client_id='befefb6d-535c-4769-9ab5-68ee79452fda'
+	client_id='06d11a46-6c06-4dd2-8f8a-23b22041cb22'
 	scopes=['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
 	api_base_url='https://api.onedrive.com/v1.0/'
 	auth_provider = AuthProvider(http_provider, client_id, scopes)
