@@ -6,17 +6,17 @@ Command-line access to your files across major cloud service accounts. Currently
 
 # features
 
-## upload this
+### upload this
 ![upload](images/upload.gif)
 
-## delete that
+### delete that
 ![delete](images/delete.gif)
 
-## download things
+### download things
 ![download](images/download.gif)
 
-## search it
+### search it
 ![search](images/search.gif)
 
-## storage summary
+### storage summary
 ![summary](images/summary.gif)
