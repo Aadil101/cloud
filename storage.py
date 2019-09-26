@@ -10,6 +10,8 @@ from pydrive.drive import GoogleDrive
 import requests
 import sys
 
+sys.stdout = open('message.log', 'w')
+
 # constants
 threshold = 1e6
 
@@ -21,7 +23,7 @@ class Dump:
     def get_drive(self, drive_name):
         return self.lookup[drive_name]
     def storage(self):
-        return {drive_name:{"used":drive.used_storage_bytes(), "remaining":drive.remaining_storage_bytes()} \
+        return {drive_name:{'used':drive.used_storage_bytes(), 'remaining':drive.remaining_storage_bytes()} \
                 for drive_name, drive in self.lookup.items()}
     def query(self, query, drive_name=None):
         if drive_name:
@@ -38,6 +40,20 @@ class Dump:
         for drive_name in self.lookup:
             stuff.update(self.get_drive(drive_name).files())
         return stuff
+    def download_folder(self, drive_name, _id, name, path):
+        stack = [(_id, name)]
+        id_to_path = {_id: path}
+        while stack:
+            folder_id, folder_name = stack.pop()
+            folder_path = id_to_path[folder_id]
+            os.mkdir(os.path.join(folder_path, folder_name))
+            for file_id, file_details in self.files(drive_name, folder_id).items():
+                (file_name, file_kind, _) = file_details[drive_name]
+                if file_kind == 'folder':
+                    id_to_path[file_id] = os.path.join(folder_path, folder_name)
+                    stack.append((file_id, file_name))
+                else:
+                    self.download_file(drive_name, file_id, os.path.join(folder_path, folder_name))
     def download_file(self, drive_name, _id, path):
         self.get_drive(drive_name).download_file(_id, path)
     def delete_folder(self, drive_name, _id):
@@ -130,7 +146,7 @@ class GDrive(GoogleDrive):
         return int(self.GetAbout()['quotaBytesTotal']) - self.used_storage_bytes()
     def query(self, query):
         return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
-                for file in self.ListFile({'q': 'trashed=false and title="{}"'.format(query)}).GetList()}
+                for file in self.ListFile({'q': 'title="{}" and trashed=false'.format(query)}).GetList()}
     def files(self, _id='root'):
         return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
@@ -138,7 +154,8 @@ class GDrive(GoogleDrive):
         file = self.CreateFile({'id': _id})
         if file['mimeType'] in mimetypes:
             download_type, download_ext = mimetypes[file['mimeType']]
-            file.GetContentFile(os.path.join(path, file['title']+download_ext), mimetype=download_type)
+            print('download_type: '+str(download_type)+', download_ext: '+str(download_ext))
+            file.GetContentFile(os.path.join(path, file['title'].replace('/', u'\u2215')+download_ext), mimetype=download_type)
         else:
             file.GetContentFile(os.path.join(path, file['title']), mimetype=file['mimeType'])
     def delete_folder(self, _id):
@@ -215,9 +232,9 @@ class Box(Client):
             file.download_to(out_file)
             out_file.close()
     def delete_folder(self, _id):
-        self.file(_id).delete()
-    def delete_file(self, _id):
         self.folder(_id).delete()
+    def delete_file(self, _id):
+        self.file(_id).delete()
     def add_folder(self, path, folder='0'):
         return self.folder(folder).create_subfolder(ntpath.basename(path)).id
     def add_file(self, path, folder='0'):
