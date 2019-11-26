@@ -10,8 +10,6 @@ from pydrive.drive import GoogleDrive
 import requests
 import sys
 
-sys.stdout = open('message.log', 'w')
-
 # constants
 threshold = 1e6
 
@@ -277,9 +275,3 @@ class ODrive(OneDriveClient):
         else:
             self.item(drive='me', id=folder).children[ntpath.basename(path)].upload(path)
             return True
-
-'''
-    #from absl import flags
-    #FLAGS = flags.FLAGS
-    #flags.DEFINE_float('threshold', 1e6, 'how close to full a drive can be')
-'''
