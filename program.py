@@ -40,6 +40,8 @@ def display(stdscr):
 		for file_id, file_details in files.items():
 			drive_name = list(file_details.keys())[0]
 			(name, kind, date_modified) = file_details[drive_name]
+			if name.startswith('.'):
+				continue
 			bags.append(Bag({'kind':kind, 'name':name, 'date_modified':date_modified, 'drive_name':drive_name, '_id':file_id}))
 		# the show begins
 		travel = 0
