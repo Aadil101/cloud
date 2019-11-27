@@ -318,6 +318,8 @@ def boot():
 			continue
 		lookup[drive_name] = []
 		for account in os.listdir(os.path.join('credentials', drive_name)):
+			if account.startswith('.'):
+				continue
 			lookup[drive_name].append(globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account), int(account)))
 	return lookup
 
