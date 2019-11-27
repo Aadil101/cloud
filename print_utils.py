@@ -79,9 +79,19 @@ class Bag:
 	def get(self, name):
 		return self.lookup[name]
 	def __str__(self):
-		char_limit_dict = {'kind':7, 'name':20, 'drive_name':10, 'date_modified':10}
+		char_limit_dict = {'file_kind':7, 'file_name':20, 'drive_kind':10, 'date_modified':10}
 		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
-									 for key in ['kind', 'name', 'drive_name', 'date_modified'])
+									 for key in ['file_kind', 'file_name', 'drive_kind', 'date_modified'])
+
+class Sack:
+	def __init__(self, lookup={}):
+		self.lookup = lookup
+	def get(self, name):
+		return self.lookup[name]
+	def __str__(self):
+		char_limit_dict = {'account':10, 'email':25}
+		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
+									 for key in ['account', 'email'])
 
 class Completer:
     def _listdir(self, root):

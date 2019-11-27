@@ -1,21 +1,19 @@
-from boxsdk import OAuth2
 from collections import deque
 import curses
-from dropbox import DropboxOAuth2FlowNoRedirect
-import keyring
-from onedrivesdk import AuthProvider, HttpProvider
 import os
-from print_utils import Bag, Completer, print_bytes
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
-from storage import Box, Dump, DBox, GDrive, ODrive
+from print_utils import *
+from storage import *
 import sys
 import time
+
+# for debugging
+message = open("message.log","w")
+sys.stdout = message
 
 # global variables
 dump = None
 max_page_history_length = 100
-box_username = None
+drive_classes = {'google': 'GDrive', 'dropbox': 'DBox', 'box': 'Box', 'onedrive': 'ODrive'}
 
 # method to tell you how I feel
 def status_line(stdscr, message):
@@ -29,25 +27,20 @@ def display(stdscr):
 	stdscr.keypad(True)	# go ahead, type
 	curses.curs_set(0)	# but no cursor for you 
 	comp = Completer()	# for autocompletion
-	back_page_history = deque([(None, None)])	# bunch of (drive_name, folder_id) tuples
+	back_page_history = deque([(None, None, None)])	# bunch of (drive_kind, drive_i, folder_id) tuples
 	forward_page_history = deque()
 	while True:
 		# get stuff in current folder
-		(curr_drive, curr_folder_id) = back_page_history[-1]
+		(curr_drive_kind, curr_drive_i, curr_folder_id) = back_page_history[-1]
 		status_line(stdscr, '...')
 		bags = []
-		files = dump.files(curr_drive, curr_folder_id)
-		for file_id, file_details in files.items():
-			drive_name = list(file_details.keys())[0]
-			(name, kind, date_modified) = file_details[drive_name]
-			if name.startswith('.'):
+		curr_drive = dump.lookup[curr_drive_kind][curr_drive_i] if curr_drive_kind else None
+		for file_id, (file_name, file_kind, drive_kind, drive_i, date_modified) in dump.files(curr_drive, curr_folder_id).items():
+			if file_name.startswith('.'):
 				continue
-			bags.append(Bag({'kind':kind, 'name':name, 'date_modified':date_modified, 'drive_name':drive_name, '_id':file_id}))
+			bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, 'drive_i': drive_i, '_id':file_id}))
 		# the show begins
-		travel = 0
-		cursor = 1
-		reverse = False
-		hide = False
+		travel, cursor, reverse = 0, 1, False
 		stdscr.clear()
 		while True:
 			(disp_height, disp_width) = stdscr.getmaxyx()
@@ -61,26 +54,70 @@ def display(stdscr):
 			stdscr.refresh()
 			# accept keystroke
 			key = stdscr.getch()
+			# clear the status line
+			status_line(stdscr, '')
+			# account overview
+			if key == ord('a'):
+				status_line(stdscr, '...')
+				sacks = []
+				for drive_name, drives in dump.lookup.items():
+					for _drive in drives:
+						sacks.append(Sack({'account': drive_name, 'email': _drive.email()}))
+				account_travel, account_cursor = 0, 1
+				stdscr.clear()
+				while True:
+					for drive_i in range(0, min(len(sacks), disp_height-1)):
+						row = drive_i+1
+						if row == account_cursor:
+							stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]), curses.A_STANDOUT)	# cursor_2
+						else:
+							stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
+					stdscr.refresh()
+					# accept keystroke
+					key = stdscr.getch()
+					# scroll down
+					if key == curses.KEY_DOWN:
+						if account_cursor < min(len(sacks), disp_height-1):
+							account_cursor += 1
+						elif account_travel < len(sacks)-(disp_height-1):
+							account_travel += 1
+						else:
+							account_cursor, account_travel = 1, 0
+					# scroll up
+					elif key == curses.KEY_UP:
+						if account_cursor > 1:
+							account_cursor -= 1
+						elif account_travel > 0:
+							account_travel -= 1
+						else:
+							account_cursor = min(len(sacks), disp_height-1)
+							account_travel = max(0, len(sacks)-(disp_height-1))
+					# exit
+					elif key == 27:	 # escape/alt key
+						break
 			# scroll down
-			if key == curses.KEY_DOWN:
-				if cursor < disp_height-1:
-					if cursor < len(bags):
-						cursor += 1
+			elif key == curses.KEY_DOWN:
+				if cursor < min(len(bags), disp_height-1):
+					cursor += 1
 				elif travel < len(bags)-(disp_height-1):
 					travel += 1
+				else:
+					cursor, travel = 1, 0
 			# scroll up
 			elif key == curses.KEY_UP:
 				if cursor > 1:
 					cursor -= 1
 				elif travel > 0:
 					travel -= 1
+				else:
+					cursor = min(len(bags), disp_height-1)
+					travel = max(0, len(bags)-(disp_height-1))
 			# enter
 			elif key == 10 or key == curses.KEY_ENTER or key == 13:
-				if bags[cursor+travel-1].get('kind') == 'folder':
+				if bags[cursor+travel-1].get('file_kind') == 'folder':
 					if forward_page_history:
 						forward_page_history.clear()
-					_id = bags[cursor+travel-1].get('_id')
-					back_page_history.append((list(files[_id])[0], _id))
+					back_page_history.append((bags[cursor+travel-1].get('drive_kind'), bags[cursor+travel-1].get('drive_i'), bags[cursor+travel-1].get('_id')))
 					if len(back_page_history) + len(forward_page_history) > max_page_history_length:
 						back_page_history.popleft()
 					break
@@ -103,7 +140,7 @@ def display(stdscr):
 				return
 			# delete
 			elif key == curses.KEY_BACKSPACE or key == 127:
-				prompt = 'delete \'{}\' (y/n)'.format(bags[cursor+travel-1].get('name'))
+				prompt = 'delete \'{}\' (y/n)'.format(bags[cursor+travel-1].get('file_name'))
 				char = None
 				while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
 					status_line(stdscr, prompt)
@@ -112,12 +149,12 @@ def display(stdscr):
 						# yes
 						if char == 121:
 							# delete it
-							if bags[cursor+travel-1].get('kind') == 'file':
+							if bags[cursor+travel-1].get('file_kind') == 'file':
 								status_line(stdscr, '...')
-								dump.delete_file(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'))
-							elif bags[cursor+travel-1].get('kind') == 'folder':
+								dump.delete_file(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'))
+							elif bags[cursor+travel-1].get('file_kind') == 'folder':
 								status_line(stdscr, '...')
-								dump.delete_folder(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'))
+								dump.delete_folder(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'))
 							break
 						# otherwise
 						else:
@@ -179,10 +216,8 @@ def display(stdscr):
 						status_line(stdscr, '...')
 						files = dump.query(query)
 						search_bags = []
-						for file_id, file_details in files.items():
-							drive_name = list(file_details.keys())[0]
-							(name, kind, date_modified) = file_details[drive_name]
-							search_bags.append(Bag({'kind':kind, 'name':name, 'date_modified':date_modified, 'drive_name':drive_name, '_id':file_id}))
+						for file_id, (file_name, file_kind, drive_kind, drive_i, date_modified) in files.items():
+							search_bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, '_id':file_id}))
 						stdscr.clear()
 				else:
 					stdscr.clear()
@@ -195,26 +230,20 @@ def display(stdscr):
 					stdscr.refresh()
 			# download
 			elif key == ord('d'):
-				if bags[cursor+travel-1].get('kind') == 'file':
+				if bags[cursor+travel-1].get('file_kind') == 'file':
 					status_line(stdscr, '...')
-					dump.download_file(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'), '/Users/pickle/Downloads/')
-					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('name')))
-				elif bags[cursor+travel-1].get('kind') == 'folder':
+					dump.download_file(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'), '/Users/pickle/Downloads/')
+					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('file_name')))
+				elif bags[cursor+travel-1].get('file_kind') == 'folder':
 					status_line(stdscr, '...')
-					dump.download_folder(bags[cursor+travel-1].get('drive_name'), bags[cursor+travel-1].get('_id'), bags[cursor+travel-1].get('name'), '/Users/pickle/Downloads/')
-					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('name')))
+					dump.download_folder(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'), bags[cursor+travel-1].get('file_name'), '/Users/pickle/Downloads/')
+					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('file_name')))
 			# storage summary
-			elif key == ord('f'):
-				if not hide:
-					summary = ''
-					status_line(stdscr, '...')
-					for drive_name, drive in dump.storage().items():
-						summary += drive_name + ' ' + print_bytes(drive['remaining']) + ', '
-					status_line(stdscr, summary)
-					hide = True
-				else:
-					status_line(stdscr, '')
-					hide = False
+			elif key == ord(' '):
+				status_line(stdscr, '...')
+				summary = ', '.join([drive_name+': '+print_bytes(details['remaining']) \
+										for drive_name, details in dump.storage().items()])
+				status_line(stdscr, summary)
 			# upload item
 			elif key == ord('u'):
 				prompt = 'upload: '
@@ -267,13 +296,13 @@ def display(stdscr):
 					continue
 				break
 			elif key == ord('1'):
-				bags.sort(key=lambda bag: bag.get('kind'), reverse=reverse)
+				bags.sort(key=lambda bag: bag.get('file_kind'), reverse=reverse)
 				reverse = not reverse
 			elif key == ord('2'):
-				bags.sort(key=lambda bag: bag.get('name').lower(), reverse=reverse)
+				bags.sort(key=lambda bag: bag.get('file_name').lower(), reverse=reverse)
 				reverse = not reverse
 			elif key == ord('3'):
-				bags.sort(key=lambda bag: bag.get('drive_name'), reverse=reverse)
+				bags.sort(key=lambda bag: bag.get('drive_kind'), reverse=reverse)
 				reverse = not reverse
 			elif key == ord('4'):
 				bags.sort(key=lambda bag: bag.get('date_modified'), reverse=reverse)
@@ -281,114 +310,21 @@ def display(stdscr):
 			else:
 				stdscr.addstr(0, 0, 'uh-oh: {}\\'.format(key))
 
-# method to store Box tokens
-def store_tokens(access_token, refresh_token):
-    # use keyring to store the tokens
-    keyring.set_password('Box_Auth', box_username, access_token)
-    keyring.set_password('Box_Refresh', box_username, refresh_token)
-
 # method to boot up drives
 def boot():
-	########################
-	# google authentication
-	########################
-	gauth = GoogleAuth()
-	GoogleAuth.DEFAULT_SETTINGS['client_config_file'] = 'google/client_secrets.json'
-	# save credentials if this is a new user
-	if not os.path.isfile('google/credentials.txt'):
-		gauth.LocalWebserverAuth()
-		gauth.SaveCredentialsFile('google/credentials.txt')
-	# credentials exist, so grab them
-	gauth.LoadCredentialsFile('google/credentials.txt')
-	# refresh credentials, ie. tokens, if need be
-	if gauth.access_token_expired:
-		gauth.Refresh()
-	else:
-		gauth.Authorize()
-	#########################
-	# dropbox authentication
-	#########################
-	token = None
-	# save credentials if this is a new user
-	if not os.path.isfile('dropbox/credentials.txt'):
-		auth_flow = DropboxOAuth2FlowNoRedirect('xflfxng1226db2t', 'rnzxajzd6hq04d6')
-		auth_url = auth_flow.start()
-		print('1. Go to: ' + auth_url)
-		print('2. Click \'Allow\' (you might have to log in first).')
-		print('3. Copy the authorization code.')
-		auth_code = input('Enter the authorization code here: ').strip()
-		oauth_result = auth_flow.finish(auth_code)
-		with open('dropbox/credentials.txt', 'a') as file:
-			token = oauth_result.access_token
-			file.write(token)
-	# credentials exist, so grab them
-	else:
-		with open('dropbox/credentials.txt') as file:
-			token = file.readline()
-	#####################
-	# box authentication
-	#####################
-	# save credentials if this is a new user
-	if not os.path.isfile('box/credentials.txt'):
-		oauth = OAuth2(
-			client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
-			client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6'
-		)
-		auth_url, csrf_token = oauth.get_authorization_url('http://localhost')
-		print('1. Go to: ' + auth_url)
-		auth_code = input('2. Enter the authorization code here: ').strip()
-		access_token, refresh_token = oauth.authenticate(auth_code)
-		box_username = Box(oauth).user().get().__dict__['login']
-		print(box_username)
-		keyring.set_password('Box_Auth', box_username, access_token)
-		keyring.set_password('Box_Refresh', box_username, refresh_token)
-		with open('box/credentials.txt', 'a') as file:
-			file.write(box_username)
-	# credentials exist, so grab them
-	else:
-		with open('box/credentials.txt') as file:
-			box_username = file.readline()
-	# build credentials
-	oauth = OAuth2(
-		client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
-		client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
-		store_tokens=store_tokens,
-		access_token=keyring.get_password('Box_Auth', box_username),
-		refresh_token=keyring.get_password('Box_Refresh', box_username)
-	)
-	##########################
-	# onedrive authentication
-	##########################
-	client_id = '06d11a46-6c06-4dd2-8f8a-23b22041cb22'
-	client_secret = 'r2A/ce3_u+WaF27EiCHTP[Eu7*rbK+55'
-	base_url='https://api.onedrive.com/v1.0/'
-	scopes = ['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
-	http_provider = HttpProvider()
-	auth_provider = AuthProvider(
-		http_provider=http_provider,
-		client_id=client_id,
-		scopes=scopes
-	)
-	# save credentials if this is a new user
-	if not os.path.isfile('onedrive/credentials.pickle'):
-		redirect_url = 'http://localhost:8080/'
-		auth_url = auth_provider.get_auth_url(redirect_url)
-		print('1. Go to: ' + auth_url)
-		auth_code = input('2. Enter the authorization code here, ie. after \'code=\': ').strip()
-		auth_provider.authenticate(auth_code, redirect_url, client_secret)
-		auth_provider.save_session(path='onedrive/credentials.pickle')
-	# credentials exist, so grab them
-	auth_provider.load_session(path='onedrive/credentials.pickle')
-	auth_provider.refresh_token()
-	########################
-	# spit out the 4 drives
-	return GDrive(gauth), DBox(token), Box(oauth), ODrive(base_url, auth_provider, http_provider)
+	lookup = {}
+	for drive_name in os.listdir('credentials'):
+		if drive_name.startswith('.'):
+			continue
+		lookup[drive_name] = []
+		for account in os.listdir(os.path.join('credentials', drive_name)):
+			lookup[drive_name].append(globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account), int(account)))
+	return lookup
 
 def main():
 	global dump
 	# boot er up
-	google, dropbox, box, onedrive = boot()
-	dump = Dump({'google': google, 'dropbox': dropbox, 'box': box, 'onedrive': onedrive})
+	dump = Dump(lookup=boot())
 	# and so it begins
 	curses.wrapper(display)
 

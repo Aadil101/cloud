@@ -1,11 +1,13 @@
-from boxsdk import Client
+from boxsdk import Client, OAuth2
 import datetime
-from dropbox import Dropbox
+from dropbox import Dropbox, DropboxOAuth2FlowNoRedirect
 from dropbox.files import FolderMetadata
+import keyring
 import ntpath
 import onedrivesdk
-from onedrivesdk import OneDriveClient
+from onedrivesdk import AuthProvider, HttpProvider, OneDriveClient
 import os
+from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 import requests
 import sys
@@ -16,49 +18,48 @@ threshold = 1e6
 class Dump:
     def __init__(self, lookup={}):
         self.lookup = lookup
-    def add_drive(self, drive, drive_name):
-        self.lookup[drive_name] = drive
-    def get_drive(self, drive_name):
-        return self.lookup[drive_name]
+    def add_drive(self, drive, drive_kind):
+        self.lookup[drive_kind].append(drive)
     def storage(self):
-        return {drive_name:{'used':drive.used_storage_bytes(), 'remaining':drive.remaining_storage_bytes()} \
-                for drive_name, drive in self.lookup.items()}
-    def query(self, query, drive_name=None):
-        if drive_name:
-            return self.get_drive(drive_name).query(query)
-        else:
-            files = {}
-            for _ , drive in self.lookup.items():
-                files.update(drive.query(query))
-            return files
-    def files(self, drive_name=None, _id=None):
-        if drive_name and _id:
-            return self.get_drive(drive_name).files(_id)
+        return {drive_kind:{'used':sum(drive.used_storage_bytes() for drive in drives), \
+                       'remaining':sum(drive.remaining_storage_bytes() for drive in drives)} \
+                for drive_kind, drives in self.lookup.items()}
+    def query(self, query, drive=None):
+        if drive:
+            return drive.query(query)
         stuff = {}
-        for drive_name in self.lookup:
-            stuff.update(self.get_drive(drive_name).files())
+        for drives in self.lookup.values():
+            for drive in drives:
+                stuff.update(drive.query(query))
         return stuff
-    def download_folder(self, drive_name, _id, name, path):
+    def files(self, drive=None, _id=None):
+        if drive and _id:
+            return drive.files(_id)
+        stuff = {}
+        for drives in self.lookup.values():
+            for drive in drives:
+                stuff.update(drive.files())
+        return stuff
+    def download_folder(self, drive, _id, name, path):
         stack = [(_id, name)]
         id_to_path = {_id: path}
         while stack:
             folder_id, folder_name = stack.pop()
             folder_path = id_to_path[folder_id]
             os.mkdir(os.path.join(folder_path, folder_name))
-            for file_id, file_details in self.files(drive_name, folder_id).items():
-                (file_name, file_kind, _) = file_details[drive_name]
+            for file_id, (file_name, file_kind, _, __, ___) in self.files(drive, folder_id).items():
                 if file_kind == 'folder':
                     id_to_path[file_id] = os.path.join(folder_path, folder_name)
                     stack.append((file_id, file_name))
                 else:
-                    self.download_file(drive_name, file_id, os.path.join(folder_path, folder_name))
-    def download_file(self, drive_name, _id, path):
-        self.get_drive(drive_name).download_file(_id, path)
-    def delete_folder(self, drive_name, _id):
-        self.get_drive(drive_name).delete_folder(_id)
-    def delete_file(self, drive_name, _id):
-        self.get_drive(drive_name).delete_file(_id)
-    def add_folder(self, path, drive_name=None, folder=None, size_check=True):
+                    self.download_file(drive, file_id, os.path.join(folder_path, folder_name))
+    def download_file(self, drive, _id, path):
+        drive.download_file(_id, path)
+    def delete_folder(self, drive, _id):
+        drive.delete_folder(_id)
+    def delete_file(self, drive, _id):
+        drive.delete_file(_id)
+    def add_folder(self, path, drive=None, folder=None, size_check=True):
         if os.path.isdir(path):
             path = path.rstrip('/')
             # optionally check size of directory
@@ -72,60 +73,54 @@ class Dump:
                         if not os.path.islink(local_path):
                             size += os.path.getsize(local_path)
             # try to upload directory
-            if drive_name:
-                if drive_name in self.lookup:
-                    drive = self.get_drive(drive_name)
-                    if not size_check or size < drive.remaining_storage_bytes()-threshold:
-                        path_to_id = {}
-                        if folder:
-                            path_to_id[os.path.join(folder, ntpath.basename(path))] = drive.add_folder(path, folder)
-                        else:
-                            path_to_id[ntpath.basename(path)] = drive.add_folder(path)
-                        for root, dirs, files in os.walk(path):
-                            local = root[root.find(ntpath.basename(path)):]
-                            for _dir in dirs:
-                                if folder:
-                                    path_to_id[os.path.join(folder, local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[os.path.join(folder, local)])
-                                else:
-                                    path_to_id[os.path.join(local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[local])
-                            for file in files:
-                                if not file.startswith('.'):
-                                    if folder:
-                                        drive.add_file(os.path.join(root, file), path_to_id[os.path.join(folder, local)])
-                                    else:
-                                        drive.add_file(os.path.join(root, file), path_to_id[local])
+            if drive:
+                if not size_check or size < drive.remaining_storage_bytes()-threshold:
+                    path_to_id = {}
+                    if folder:
+                        path_to_id[os.path.join(folder, ntpath.basename(path))] = drive.add_folder(path, folder)
                     else:
-                        return 'RIP, \'{}\' can\'t fit in \'{}\''.format(ntpath.basename(path, drive_name))
+                        path_to_id[ntpath.basename(path)] = drive.add_folder(path)
+                    for root, dirs, files in os.walk(path):
+                        local = root[root.find(ntpath.basename(path)):]
+                        for _dir in dirs:
+                            if folder:
+                                path_to_id[os.path.join(folder, local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[os.path.join(folder, local)])
+                            else:
+                                path_to_id[os.path.join(local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[local])
+                        for file in files:
+                            if not file.startswith('.'):
+                                if folder:
+                                    drive.add_file(os.path.join(root, file), path_to_id[os.path.join(folder, local)])
+                                else:
+                                    drive.add_file(os.path.join(root, file), path_to_id[local])
                 else:
-                    return 'RIP, \'{}\' isn\'t a drive'.format(drive_name)
+                    return 'RIP, \'{}\' can\'t fit in this drive'.format(ntpath.basename(path))
             else:
-                for _drive_name, _drive in self.lookup.items():
-                    if size < _drive.remaining_storage_bytes()-threshold:
-                        return self.add_folder(path, _drive_name, None, False)
+                for drives in self.lookup.values():
+                    for _drive in drives:
+                        if size < _drive.remaining_storage_bytes()-threshold:
+                            return self.add_folder(path, _drive, None, False)
                 return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
         else:
             return 'RIP, folder doesn\'t exist at \'{}\''.format(path)
-    def add_file(self, path, drive_name=None, folder=None):
+    def add_file(self, path, drive=None, folder=None):
         if os.path.isfile(path):
-            if drive_name:
-                if drive_name in self.lookup:
-                    drive = self.get_drive(drive_name)
-                    if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
-                        if folder:
-                            if not drive.add_file(path, folder):
-                                return 'RIP, \'{}\' already exists in this directory of \'{}\''.format(ntpath.basename(path), drive_name)
-                        else:
-                            if not drive.add_file(path):
-                                return 'RIP, \'{}\' already exists in the root directory of \'{}\''.format(ntpath.basename(path), drive_name)
+            if drive:
+                if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
+                    if folder:
+                        if not drive.add_file(path, folder):
+                            return 'RIP, \'{}\' already exists in this directory'.format(ntpath.basename(path))
                     else:
-                        return 'RIP, there isn\'t enough space in \'{}\' for \'{}\''.format(drive_name, ntpath.basename(path))
+                        if not drive.add_file(path):
+                            return 'RIP, \'{}\' already exists in the root directory'.format(ntpath.basename(path))
                 else:
-                    return 'RIP, \'{}\' isn\'t a drive'.format(drive_name)
+                    return 'RIP, there isn\'t enough space in this drive for \'{}\''.format(ntpath.basename(path))
             else:
-                for _ , drive in self.lookup.items():
-                    if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
-                        if drive.add_file(path):
-                            return
+                for drives in self.lookup.values():
+                    for _drive in drives:
+                        if os.path.getsize(path) < _drive.remaining_storage_bytes()-threshold:
+                            if _drive.add_file(path):
+                                return
                 return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
         else:
             return 'RIP, file doesn\'t exist at \'{}\''.format(path)
@@ -138,21 +133,42 @@ mimetypes = {
 }
 
 class GDrive(GoogleDrive):
+    def __init__(self, credentials, _id):
+        self._id = _id
+        super(GDrive, self).__init__(self.boot(credentials))
+    def boot(self, credentials):
+        gauth = GoogleAuth()
+        GoogleAuth.DEFAULT_SETTINGS['client_config_file'] = os.path.join(credentials, 'client_secrets.json')
+        '''
+        # save credentials if this is a new user
+        if not os.path.isfile('google/credentials.txt'):
+            gauth.LocalWebserverAuth()
+            gauth.SaveCredentialsFile('google/credentials.txt')
+        '''
+        # credentials exist, so grab them
+        gauth.LoadCredentialsFile(os.path.join(credentials, 'credentials.txt'))
+        # refresh credentials, ie. tokens, if need be
+        if gauth.access_token_expired:
+            gauth.Refresh()
+        else:
+            gauth.Authorize()
+        return gauth
+    def email(self):
+        return self.GetAbout()['user']['emailAddress']
     def used_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesByService'][0]['bytesUsed'])
     def remaining_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesTotal']) - self.used_storage_bytes()
     def query(self, query):
-        return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
+        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self._id, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
                 for file in self.ListFile({'q': 'title="{}" and trashed=false'.format(query)}).GetList()}
     def files(self, _id='root'):
-        return {file['id']:{'google':(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y'))} \
+        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self._id, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
     def download_file(self, _id, path):
         file = self.CreateFile({'id': _id})
         if file['mimeType'] in mimetypes:
             download_type, download_ext = mimetypes[file['mimeType']]
-            print('download_type: '+str(download_type)+', download_ext: '+str(download_ext))
             file.GetContentFile(os.path.join(path, file['title'].replace('/', u'\u2215')+download_ext), mimetype=download_type)
         else:
             file.GetContentFile(os.path.join(path, file['title']), mimetype=file['mimeType'])
@@ -169,7 +185,7 @@ class GDrive(GoogleDrive):
         new_folder.Upload()
         return new_folder['id']
     def add_file(self, path, folder='root'):
-        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
@@ -180,15 +196,41 @@ class GDrive(GoogleDrive):
             return True
 
 class DBox(Dropbox):
+    def __init__(self, credentials, _id):
+        self._id = _id
+        super(DBox, self).__init__(self.boot(credentials))
+    def boot(self, credentials):
+        token = None
+        '''
+        # save credentials if this is a new user
+        if not os.path.isfile('dropbox/credentials.txt'):
+            auth_flow = DropboxOAuth2FlowNoRedirect('xflfxng1226db2t', 'rnzxajzd6hq04d6')
+            auth_url = auth_flow.start()
+            print('1. Go to: ' + auth_url)
+            print('2. Click \'Allow\' (you might have to log in first).')
+            print('3. Copy the authorization code.')
+            auth_code = input('Enter the authorization code here: ').strip()
+            oauth_result = auth_flow.finish(auth_code)
+            with open('dropbox/credentials.txt', 'a') as file:
+                token = oauth_result.access_token
+                file.write(token)
+        # credentials exist, so grab them
+        else:
+        '''
+        with open(os.path.join(credentials, 'credentials.txt')) as file:
+            token = file.readline()
+        return token
+    def email(self):
+        return self.users_get_current_account().email
     def used_storage_bytes(self):
         return self.users_get_space_usage().used
     def remaining_storage_bytes(self):
         return self.users_get_space_usage().allocation.get_individual().allocated - self.used_storage_bytes()
     def query(self, query):
-        return {file.metadata.id:{'dropbox':(file.metadata.name, 'folder' if isinstance(file.metadata, FolderMetadata) else 'file', '?' if isinstance(file.metadata, FolderMetadata) else file.metadata.client_modified.strftime('%m/%d/%y'))} \
+        return {file.metadata.id:(file.metadata.name, 'folder' if isinstance(file.metadata, FolderMetadata) else 'file', 'dropbox', self._id, '?' if isinstance(file.metadata, FolderMetadata) else file.metadata.client_modified.strftime('%m/%d/%y')) \
                 for file in self.files_search('', query).matches}
     def files(self, _id=''):
-        return {file.id:{'dropbox':(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y'))} \
+        return {file.id:(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', 'dropbox', self._id, '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y')) \
                 for file in self.files_list_folder(_id).entries}
     def download_file(self, _id, path):
         meta = self.files_get_metadata(_id)
@@ -203,7 +245,7 @@ class DBox(Dropbox):
         self.files_delete(new_path)
         return self.files_get_metadata(os.path.join(folder, ntpath.basename(path))).id
     def add_file(self, path, folder=''):
-        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
@@ -214,15 +256,57 @@ class DBox(Dropbox):
             return True
 
 class Box(Client):
+    def store_tokens(self, access_token, refresh_token):
+        # use keyring to store the tokens
+        keyring.set_password('Box_Auth', self.username, access_token)
+        keyring.set_password('Box_Refresh', self.username, refresh_token)
+    def __init__(self, credentials, _id):
+        self._id = _id
+        self.username = None
+        super(Box, self).__init__(self.boot(credentials))
+    def boot(self, credentials):
+        '''
+        # save credentials if this is a new user
+        if not os.path.isfile('box/credentials.txt'):
+            oauth = OAuth2(
+                client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
+                client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6'
+            )
+            auth_url, csrf_token = oauth.get_authorization_url('http://localhost')
+            print('1. Go to: ' + auth_url)
+            auth_code = input('2. Enter the authorization code here: ').strip()
+            access_token, refresh_token = oauth.authenticate(auth_code)
+            self.username = Box(oauth).user().get().__dict__['login']
+            print(self.username)
+            keyring.set_password('Box_Auth', self.username, access_token)
+            keyring.set_password('Box_Refresh', self.username, refresh_token)
+            with open('box/credentials.txt', 'a') as file:
+                file.write(self.username)
+        # credentials exist, so grab them
+        else:
+        '''
+        with open(os.path.join(credentials, 'credentials.txt')) as file:
+            self.username = file.readline()
+        # build credentials
+        oauth = OAuth2(
+            client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
+            client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
+            store_tokens=self.store_tokens,
+            access_token=keyring.get_password('Box_Auth', self.username),
+            refresh_token=keyring.get_password('Box_Refresh', self.username)
+		)
+        return oauth
+    def email(self):
+        return self.user().get()['login']
     def used_storage_bytes(self):
         return self.user().get().space_used
     def remaining_storage_bytes(self):
         return self.user().get().space_amount - self.used_storage_bytes()
     def query(self, query):
-        return {item.id:{'box':(item.name, item.type, '?')} \
+        return {item.id:(item.name, item.type, 'box', self._id, '?') \
                 for item in self.search().query(query)}
     def files(self, _id='0'):
-        return {item.id:{'box':(item.name, item.type, '?')} \
+        return {item.id:(item.name, item.type, 'box', self._id, '?') \
                 for item in self.folder(_id).get_items()}
     def download_file(self, _id, path):
         file = self.file(_id)
@@ -236,7 +320,7 @@ class Box(Client):
     def add_folder(self, path, folder='0'):
         return self.folder(folder).create_subfolder(ntpath.basename(path)).id
     def add_file(self, path, folder='0'):
-        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
@@ -244,6 +328,36 @@ class Box(Client):
             return True
 
 class ODrive(OneDriveClient):
+    def __init__(self, credentials, _id):
+        self._id = _id
+        super(ODrive, self).__init__(*self.boot(credentials))
+    def boot(self, credentials):
+        client_id = '06d11a46-6c06-4dd2-8f8a-23b22041cb22'
+        client_secret = 'r2A/ce3_u+WaF27EiCHTP[Eu7*rbK+55'
+        base_url='https://api.onedrive.com/v1.0/'
+        scopes = ['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
+        http_provider = HttpProvider()
+        auth_provider = AuthProvider(
+            http_provider=http_provider,
+            client_id=client_id,
+            scopes=scopes
+        )
+        '''
+        # save credentials if this is a new user
+        if not os.path.isfile('onedrive/credentials.pickle'):
+            redirect_url = 'http://localhost:8080/'
+            auth_url = auth_provider.get_auth_url(redirect_url)
+            print('1. Go to: ' + auth_url)
+            auth_code = input('2. Enter the authorization code here, ie. after \'code=\': ').strip()
+            auth_provider.authenticate(auth_code, redirect_url, client_secret)
+            auth_provider.save_session(path='onedrive/credentials.pickle')
+        '''
+        # credentials exist, so grab them
+        auth_provider.load_session(path=os.path.join(credentials, 'credentials.pickle'))
+        auth_provider.refresh_token()
+        return base_url, auth_provider, http_provider
+    def email(self):
+        return '?'
     def _quota_dict(self):
         return requests.get(self.base_url + 'drive/', headers = {
                             'Authorization': 'bearer {access_token}'.format(access_token = str(self.auth_provider.access_token)),
@@ -253,10 +367,10 @@ class ODrive(OneDriveClient):
     def remaining_storage_bytes(self):
         return self._quota_dict()['remaining']
     def query(self, query):
-        return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
+        return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self._id, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id='root').search(q=query).get().items()}
     def files(self, _id='root'):
-        return {item.id:{'onedrive':(item.name, 'file' if item.folder == None else 'folder', item.last_modified_date_time.strftime('%m/%d/%y'))} \
+        return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self._id, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id=_id).children.request().get()}
     def download_file(self, _id, path):
         item = self.item(drive='me', id=_id)
@@ -269,7 +383,7 @@ class ODrive(OneDriveClient):
         item = onedrivesdk.Item({'name':ntpath.basename(path), 'folder':onedrivesdk.Folder()})
         return self.item(drive='me', id=folder).children.add(item).id
     def add_file(self, path, folder='root'):
-        existing = {list(file.values())[0][0] for file in self.files(folder).values()}
+        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
