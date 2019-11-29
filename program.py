@@ -4,7 +4,7 @@ import os
 from print_utils import *
 from storage import *
 import sys
-import time
+import webbrowser
 
 # for debugging
 message = open("message.log","w")
@@ -30,19 +30,21 @@ def display(stdscr):
 	back_page_history = deque([(None, None, None)])	# bunch of (drive_kind, drive_i, folder_id) tuples
 	forward_page_history = deque()
 	while True:
-		# get stuff in current folder
-		(curr_drive_kind, curr_drive_i, curr_folder_id) = back_page_history[-1]
-		status_line(stdscr, '...')
-		bags = []
-		curr_drive = dump.lookup[curr_drive_kind][curr_drive_i] if curr_drive_kind else None
-		for file_id, (file_name, file_kind, drive_kind, drive_i, date_modified) in dump.files(curr_drive, curr_folder_id).items():
-			if file_name.startswith('.'):
-				continue
-			bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, 'drive_i': drive_i, '_id':file_id}))
-		# the show begins
-		travel, cursor, reverse = 0, 1, False
-		stdscr.clear()
+		refresh = True
 		while True:
+			if refresh:
+				# get stuff in current folder
+				(curr_drive_kind, curr_drive_i, curr_folder_id) = back_page_history[-1]
+				status_line(stdscr, '...')
+				bags = []
+				curr_drive = dump.lookup[curr_drive_kind][curr_drive_i] if curr_drive_kind else None
+				for file_id, (file_name, file_kind, drive_kind, drive_i, date_modified) in dump.files(curr_drive, curr_folder_id).items():
+					if file_name.startswith('.'):
+						continue
+					bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, 'drive_i': drive_i, '_id':file_id}))
+				# the show begins
+				travel, cursor, reverse, refresh = 0, 1, False, False
+				stdscr.clear()
 			(disp_height, disp_width) = stdscr.getmaxyx()
 			# show as much stuff in current folder as possible
 			for bag_i in range(0, min(len(bags), disp_height-1)):
@@ -58,42 +60,106 @@ def display(stdscr):
 			status_line(stdscr, '')
 			# account overview
 			if key == ord('a'):
-				status_line(stdscr, '...')
-				sacks = []
-				for drive_name, drives in dump.lookup.items():
-					for _drive in drives:
-						sacks.append(Sack({'account': drive_name, 'email': _drive.email()}))
-				account_travel, account_cursor = 0, 1
-				stdscr.clear()
+				account_travel, account_cursor, account_refresh, sacks = 0, 1, True, []
 				while True:
-					for drive_i in range(0, min(len(sacks), disp_height-1)):
-						row = drive_i+1
-						if row == account_cursor:
-							stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]), curses.A_STANDOUT)	# cursor_2
-						else:
-							stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
-					stdscr.refresh()
-					# accept keystroke
-					key = stdscr.getch()
-					# scroll down
-					if key == curses.KEY_DOWN:
-						if account_cursor < min(len(sacks), disp_height-1):
-							account_cursor += 1
-						elif account_travel < len(sacks)-(disp_height-1):
-							account_travel += 1
-						else:
-							account_cursor, account_travel = 1, 0
-					# scroll up
-					elif key == curses.KEY_UP:
-						if account_cursor > 1:
-							account_cursor -= 1
-						elif account_travel > 0:
-							account_travel -= 1
-						else:
-							account_cursor = min(len(sacks), disp_height-1)
-							account_travel = max(0, len(sacks)-(disp_height-1))
-					# exit
-					elif key == 27:	 # escape/alt key
+					if account_refresh:
+						account_travel, account_cursor, account_refresh, sacks = 0, 1, False, []
+						for drive_name, drives in dump.lookup.items():
+							for _drive in drives:
+								sacks.append(Sack({'account': drive_name, 'email': _drive.email()}))
+					key = None
+					while True:
+						# refresh screen
+						stdscr.clear()
+						for drive_i in range(0, min(len(sacks), disp_height-1)):
+							row = drive_i+1
+							if row == account_cursor:
+								stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]), curses.A_STANDOUT)	# cursor_2
+							else:
+								stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
+						stdscr.refresh()
+						# accept keystroke
+						key = stdscr.getch()
+						# scroll down
+						if key == curses.KEY_DOWN:
+							if account_cursor < min(len(sacks), disp_height-1):
+								account_cursor += 1
+							elif account_travel < len(sacks)-(disp_height-1):
+								account_travel += 1
+							else:
+								account_cursor, account_travel = 1, 0
+						# scroll up
+						elif key == curses.KEY_UP:
+							if account_cursor > 1:
+								account_cursor -= 1
+							elif account_travel > 0:
+								account_travel -= 1
+							else:
+								account_cursor = min(len(sacks), disp_height-1)
+								account_travel = max(0, len(sacks)-(disp_height-1))
+						# add an account
+						elif key == ord('a'):
+							prompt = 'account type: '
+							drive_class = ''
+							char = None
+							while True:
+								status_line(stdscr, prompt)
+								stdscr.addstr(drive_class)
+								char = stdscr.getch()
+								# delete
+								if char == 127:
+									drive_class = drive_class[:-1]
+								# enter
+								elif char == curses.KEY_ENTER or char == 10 or char == 13:
+									if drive_class in drive_classes:
+										break
+									else:
+										prompt = 'nope, try again: '
+								# exit
+								elif char == 27:
+									break
+								# character
+								else:
+									drive_class += chr(char)
+							if char == 27:
+								break
+							status, output = globals()[drive_classes[drive_class]].credentials()
+							credentials = None
+							if status == 'success':
+								credentials = output
+								dump.lookup[drive_class].append(globals()[drive_classes[drive_class]](credentials))
+							elif status == 'pending':
+								webbrowser.open(output)
+								prompt = 'code: '
+								code = ''
+								char = None
+								while True:
+									status_line(stdscr, prompt)
+									stdscr.addstr(code)
+									char = stdscr.getch()
+									# delete
+									if char == 127:
+										code = code[:-1]
+									# enter
+									elif char == curses.KEY_ENTER or char == 10 or char == 13:
+										status, output = globals()[drive_classes[drive_class]].credentials(code)
+										if status == 'success':
+											credentials = output
+											break
+										elif status == 'failure':
+											prompt = 'nope, try again: '
+									# exit
+									elif char == 27:
+										break
+									# character
+									else:
+										code += chr(char)
+								dump.lookup[drive_class].append(globals()[drive_classes[drive_class]](credentials))
+							account_refresh, refresh = True, True
+							break
+						elif key == 27:
+							break
+					if key == 27:
 						break
 			# scroll down
 			elif key == curses.KEY_DOWN:
@@ -318,9 +384,9 @@ def boot():
 			continue
 		lookup[drive_name] = []
 		for account in os.listdir(os.path.join('credentials', drive_name)):
-			if account.startswith('.'):
+			if not account.isdigit():
 				continue
-			lookup[drive_name].append(globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account), int(account)))
+			lookup[drive_name].append(globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account)))
 	return lookup
 
 def main():

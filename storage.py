@@ -133,18 +133,23 @@ mimetypes = {
 }
 
 class GDrive(GoogleDrive):
-    def __init__(self, credentials, _id):
-        self._id = _id
+    count = 0
+    def __init__(self, credentials):
+        self._id = GDrive.count
         super(GDrive, self).__init__(self.boot(credentials))
+        GDrive.count += 1
+    @staticmethod
+    def credentials():
+        # this is a new user, so build new credentials
+        gauth = GoogleAuth()
+        credentials = os.path.join('credentials/google', str(GDrive.count))
+        os.mkdir(credentials)
+        gauth.LocalWebserverAuth()
+        gauth.SaveCredentialsFile(os.path.join(credentials, 'credentials.txt'))
+        return 'success', credentials
     def boot(self, credentials):
         gauth = GoogleAuth()
-        GoogleAuth.DEFAULT_SETTINGS['client_config_file'] = os.path.join(credentials, 'client_secrets.json')
-        '''
-        # save credentials if this is a new user
-        if not os.path.isfile('google/credentials.txt'):
-            gauth.LocalWebserverAuth()
-            gauth.SaveCredentialsFile('google/credentials.txt')
-        '''
+        GoogleAuth.DEFAULT_SETTINGS['client_config_file'] = 'credentials/google/client_secrets.json'
         # credentials exist, so grab them
         gauth.LoadCredentialsFile(os.path.join(credentials, 'credentials.txt'))
         # refresh credentials, ie. tokens, if need be
@@ -196,30 +201,33 @@ class GDrive(GoogleDrive):
             return True
 
 class DBox(Dropbox):
-    def __init__(self, credentials, _id):
-        self._id = _id
+    count = 0
+    auth_flow = None
+    def __init__(self, credentials):
+        self._id = DBox.count
         super(DBox, self).__init__(self.boot(credentials))
-    def boot(self, credentials):
-        token = None
-        '''
-        # save credentials if this is a new user
-        if not os.path.isfile('dropbox/credentials.txt'):
-            auth_flow = DropboxOAuth2FlowNoRedirect('xflfxng1226db2t', 'rnzxajzd6hq04d6')
-            auth_url = auth_flow.start()
-            print('1. Go to: ' + auth_url)
-            print('2. Click \'Allow\' (you might have to log in first).')
-            print('3. Copy the authorization code.')
-            auth_code = input('Enter the authorization code here: ').strip()
-            oauth_result = auth_flow.finish(auth_code)
-            with open('dropbox/credentials.txt', 'a') as file:
-                token = oauth_result.access_token
-                file.write(token)
-        # credentials exist, so grab them
+        DBox.count += 1
+    @staticmethod
+    def credentials(auth_code=None):
+        credentials = os.path.join('credentials/dropbox', str(DBox.count))
+        if auth_code:
+            oauth_result = None
+            try:
+                oauth_result = DBox.auth_flow.finish(auth_code)
+            except:
+                return 'failure', None
+            else:
+                with open(os.path.join(credentials, 'credentials.txt'), 'a+') as file:
+                    file.write(oauth_result.access_token)
+                return 'success', credentials
         else:
-        '''
+            os.mkdir(credentials)
+            DBox.auth_flow = DropboxOAuth2FlowNoRedirect('xflfxng1226db2t', 'rnzxajzd6hq04d6')
+            auth_url = DBox.auth_flow.start()
+            return 'pending', auth_url
+    def boot(self, credentials):
         with open(os.path.join(credentials, 'credentials.txt')) as file:
-            token = file.readline()
-        return token
+            return file.readline()
     def email(self):
         return self.users_get_current_account().email
     def used_storage_bytes(self):
@@ -256,42 +264,48 @@ class DBox(Dropbox):
             return True
 
 class Box(Client):
+    count = 0
+    def __init__(self, credentials):
+        self._id = Box.count
+        self.username = None
+        super(Box, self).__init__(self.boot(credentials))
+        Box.count += 1
+    @staticmethod
+    def credentials(auth_code=None):
+        credentials = os.path.join('credentials/box', str(Box.count))
+        oauth = OAuth2(
+            client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
+            client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6'
+        )
+        if auth_code:
+            access_token, refresh_token = None, None
+            try:    
+                access_token, refresh_token = oauth.authenticate(auth_code)
+            except:
+                return 'failure', None
+            else:
+                username = Client(oauth).user().get().__dict__['login']
+                with open(os.path.join(credentials, 'credentials.txt'), 'a+') as file:
+                    file.write(username)
+                keyring.set_password('Box_Auth', username, access_token)
+                keyring.set_password('Box_Refresh', username, refresh_token)
+                return 'success', credentials
+        else:
+            os.mkdir(credentials)
+            auth_url, _ = oauth.get_authorization_url('http://localhost')
+            return 'pending', auth_url
     def store_tokens(self, access_token, refresh_token):
         # use keyring to store the tokens
         keyring.set_password('Box_Auth', self.username, access_token)
         keyring.set_password('Box_Refresh', self.username, refresh_token)
-    def __init__(self, credentials, _id):
-        self._id = _id
-        self.username = None
-        super(Box, self).__init__(self.boot(credentials))
     def boot(self, credentials):
-        '''
-        # save credentials if this is a new user
-        if not os.path.isfile('box/credentials.txt'):
-            oauth = OAuth2(
-                client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
-                client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6'
-            )
-            auth_url, csrf_token = oauth.get_authorization_url('http://localhost')
-            print('1. Go to: ' + auth_url)
-            auth_code = input('2. Enter the authorization code here: ').strip()
-            access_token, refresh_token = oauth.authenticate(auth_code)
-            self.username = Box(oauth).user().get().__dict__['login']
-            print(self.username)
-            keyring.set_password('Box_Auth', self.username, access_token)
-            keyring.set_password('Box_Refresh', self.username, refresh_token)
-            with open('box/credentials.txt', 'a') as file:
-                file.write(self.username)
-        # credentials exist, so grab them
-        else:
-        '''
         with open(os.path.join(credentials, 'credentials.txt')) as file:
             self.username = file.readline()
         # build credentials
         oauth = OAuth2(
             client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
             client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
-            store_tokens=self.store_tokens,
+            store_tokens=Box.store_tokens,
             access_token=keyring.get_password('Box_Auth', self.username),
             refresh_token=keyring.get_password('Box_Refresh', self.username)
 		)
@@ -328,34 +342,50 @@ class Box(Client):
             return True
 
 class ODrive(OneDriveClient):
-    def __init__(self, credentials, _id):
-        self._id = _id
+    redirect_url = 'http://localhost:8080/'
+    client_id='06d11a46-6c06-4dd2-8f8a-23b22041cb22'
+    client_secret = 'r2A/ce3_u+WaF27EiCHTP[Eu7*rbK+55'
+    base_url='https://api.onedrive.com/v1.0/'
+    scopes=['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
+    count = 0
+    auth_provider = None
+    def __init__(self, credentials):
+        self._id = ODrive.count
         super(ODrive, self).__init__(*self.boot(credentials))
+        ODrive.count += 1
+    @staticmethod
+    def credentials(auth_code=None):
+        credentials = os.path.join('credentials/onedrive', str(ODrive.count))
+        http_provider = HttpProvider()
+        auth_provider = AuthProvider(
+            http_provider=HttpProvider(),
+            client_id=ODrive.client_id,
+            scopes=ODrive.scopes,
+        )
+        if auth_code:
+            try:
+                ODrive.auth_provider.authenticate(auth_code, ODrive.redirect_url, ODrive.client_secret)
+            except:
+                return 'failure', None
+            else:
+                ODrive.auth_provider.save_session(path=os.path.join(credentials, 'credentials.pickle'))
+                return 'success', credentials
+            ODrive.auth_provider = None
+        else:
+            os.mkdir(credentials)
+            ODrive.auth_provider = auth_provider
+            return 'pending', auth_provider.get_auth_url(ODrive.redirect_url)
     def boot(self, credentials):
-        client_id = '06d11a46-6c06-4dd2-8f8a-23b22041cb22'
-        client_secret = 'r2A/ce3_u+WaF27EiCHTP[Eu7*rbK+55'
-        base_url='https://api.onedrive.com/v1.0/'
-        scopes = ['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
         http_provider = HttpProvider()
         auth_provider = AuthProvider(
             http_provider=http_provider,
-            client_id=client_id,
-            scopes=scopes
+            client_id=ODrive.client_id,
+            scopes=ODrive.scopes,
         )
-        '''
-        # save credentials if this is a new user
-        if not os.path.isfile('onedrive/credentials.pickle'):
-            redirect_url = 'http://localhost:8080/'
-            auth_url = auth_provider.get_auth_url(redirect_url)
-            print('1. Go to: ' + auth_url)
-            auth_code = input('2. Enter the authorization code here, ie. after \'code=\': ').strip()
-            auth_provider.authenticate(auth_code, redirect_url, client_secret)
-            auth_provider.save_session(path='onedrive/credentials.pickle')
-        '''
         # credentials exist, so grab them
         auth_provider.load_session(path=os.path.join(credentials, 'credentials.pickle'))
         auth_provider.refresh_token()
-        return base_url, auth_provider, http_provider
+        return ODrive.base_url, auth_provider, http_provider
     def email(self):
         return '?'
     def _quota_dict(self):

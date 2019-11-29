@@ -89,7 +89,7 @@ class Sack:
 	def get(self, name):
 		return self.lookup[name]
 	def __str__(self):
-		char_limit_dict = {'account':10, 'email':25}
+		char_limit_dict = {'account':10, 'email':30}
 		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
 									 for key in ['account', 'email'])
 
