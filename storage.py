@@ -305,7 +305,7 @@ class Box(Client):
         oauth = OAuth2(
             client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
             client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
-            store_tokens=Box.store_tokens,
+            store_tokens=self.store_tokens,
             access_token=keyring.get_password('Box_Auth', self.username),
             refresh_token=keyring.get_password('Box_Refresh', self.username)
 		)
