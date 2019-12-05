@@ -1,14 +1,18 @@
 import os
+import random
 import re
 import readline
+import string
 
 COMMANDS = ['extra']
 RE_SPACE = re.compile('.*\s+$', re.M)
 
+def random_string(length):
+	return ''.join([random.choice(string.ascii_letters + string.digits) for n in range(length)])
+
 # I made some improvements to samplebias's 'Completer' code from:
 # https://stackoverflow.com/questions/5637124/tab-completion-in-pythons-raw-input
 # :)
-
 class Completer(object):
 
 	def _listdir(self, root):
@@ -89,9 +93,9 @@ class Sack:
 	def get(self, name):
 		return self.lookup[name]
 	def __str__(self):
-		char_limit_dict = {'account':10, 'email':30}
+		char_limit_dict = {'drive_kind':10, 'account':30}
 		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
-									 for key in ['account', 'email'])
+									 for key in ['drive_kind', 'account'])
 
 class Completer:
     def _listdir(self, root):

@@ -7,13 +7,12 @@ import sys
 import webbrowser
 
 # for debugging
-message = open("message.log","w")
+message = open('message.log','w')
 sys.stdout = message
 
 # global variables
 dump = None
 max_page_history_length = 100
-drive_classes = {'google': 'GDrive', 'dropbox': 'DBox', 'box': 'Box', 'onedrive': 'ODrive'}
 
 # method to tell you how I feel
 def status_line(stdscr, message):
@@ -27,21 +26,21 @@ def display(stdscr):
 	stdscr.keypad(True)	# go ahead, type
 	curses.curs_set(0)	# but no cursor for you 
 	comp = Completer()	# for autocompletion
-	back_page_history = deque([(None, None, None)])	# bunch of (drive_kind, drive_i, folder_id) tuples
+	back_page_history = deque([(None, None, None)])	# bunch of (drive_kind, account, folder_id) tuples
 	forward_page_history = deque()
 	while True:
-		refresh = True
+		travel, cursor, refresh = 0, 1, True
 		while True:
 			if refresh:
 				# get stuff in current folder
-				(curr_drive_kind, curr_drive_i, curr_folder_id) = back_page_history[-1]
+				(curr_drive_kind, curr_account, curr_folder_id) = back_page_history[-1]
 				status_line(stdscr, '...')
 				bags = []
-				curr_drive = dump.lookup[curr_drive_kind][curr_drive_i] if curr_drive_kind else None
-				for file_id, (file_name, file_kind, drive_kind, drive_i, date_modified) in dump.files(curr_drive, curr_folder_id).items():
+				curr_drive = dump.get_drive(curr_drive_kind, curr_account) if curr_drive_kind else None
+				for file_id, (file_name, file_kind, drive_kind, account, date_modified) in dump.files(curr_drive, curr_folder_id).items():
 					if file_name.startswith('.'):
 						continue
-					bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, 'drive_i': drive_i, '_id':file_id}))
+					bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'account':account, 'drive_kind':drive_kind, '_id':file_id}))
 				# the show begins
 				travel, cursor, reverse, refresh = 0, 1, False, False
 				stdscr.clear()
@@ -54,6 +53,8 @@ def display(stdscr):
 				else:
 					stdscr.addstr(row, 0, str(bags[bag_i+travel]))
 			stdscr.refresh()
+			# selected bag
+			bag = bags[cursor+travel-1]
 			# accept keystroke
 			key = stdscr.getch()
 			# clear the status line
@@ -64,9 +65,9 @@ def display(stdscr):
 				while True:
 					if account_refresh:
 						account_travel, account_cursor, account_refresh, sacks = 0, 1, False, []
-						for drive_name, drives in dump.lookup.items():
-							for _drive in drives:
-								sacks.append(Sack({'account': drive_name, 'email': _drive.email()}))
+						for drive_name, drives in dump.get_drives().items():
+							for drive in drives.values():
+								sacks.append(Sack({'drive_kind': drive_name, 'account': drive.account}))
 					key = None
 					while True:
 						# refresh screen
@@ -78,6 +79,8 @@ def display(stdscr):
 							else:
 								stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
 						stdscr.refresh()
+						# selected sack
+						sack = sacks[account_cursor+account_travel-1]
 						# accept keystroke
 						key = stdscr.getch()
 						# scroll down
@@ -97,7 +100,54 @@ def display(stdscr):
 							else:
 								account_cursor = min(len(sacks), disp_height-1)
 								account_travel = max(0, len(sacks)-(disp_height-1))
-						# add an account
+						# delete
+						elif key == curses.KEY_BACKSPACE or key == 127:
+							prompt = 'delete \'{}\' \'{}\' (y/n)'.format(sack.get('drive_kind'), sack.get('account'))
+							char = None
+							while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+								status_line(stdscr, prompt)
+								char = stdscr.getch()
+								if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+									# yes, delete it
+									if char == ord('y'):
+										dump.remove_drive(sack.get('drive_kind'), sack.get('account'))
+										break
+									# otherwise
+									else:
+										prompt = 'nope, try again (y/n)'
+							else:
+								status_line(stdscr, '')
+								continue
+							status_line(stdscr, '')
+							account_refresh, refresh = True, True
+							break
+							'''
+							prompt = 'delete \'{}\' (y/n)'.format(bag.get('file_name'))
+							char = None
+							while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+								status_line(stdscr, prompt)
+								char = stdscr.getch()
+								if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+									# yes, delete it
+									if char == ord('y'):
+										drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
+										if bag.get('file_kind') == 'file':
+											status_line(stdscr, '...')
+											dump.delete_file(drive, bag.get('_id'))
+										elif bag.get('file_kind') == 'folder':
+											status_line(stdscr, '...')
+											dump.delete_folder(drive, bag.get('_id'))
+										break
+									# otherwise
+									else:
+										prompt = 'nope, try again (y/n)'
+							else:
+								status_line(stdscr, '')
+								continue
+							status_line(stdscr, '')
+							break
+							'''
+						# add
 						elif key == ord('a'):
 							prompt = 'account type: '
 							drive_class = ''
@@ -127,7 +177,8 @@ def display(stdscr):
 							credentials = None
 							if status == 'success':
 								credentials = output
-								dump.lookup[drive_class].append(globals()[drive_classes[drive_class]](credentials))
+								drive = globals()[drive_classes[drive_class]](credentials)
+								dump.add_drive(drive_class, drive.account, drive)
 							elif status == 'pending':
 								webbrowser.open(output)
 								prompt = 'code: '
@@ -154,7 +205,8 @@ def display(stdscr):
 									# character
 									else:
 										code += chr(char)
-								dump.lookup[drive_class].append(globals()[drive_classes[drive_class]](credentials))
+								drive = globals()[drive_classes[drive_class]](credentials)
+								dump.add_drive(drive_class, drive.email(), drive)
 							account_refresh, refresh = True, True
 							break
 						elif key == 27:
@@ -180,10 +232,10 @@ def display(stdscr):
 					travel = max(0, len(bags)-(disp_height-1))
 			# enter
 			elif key == 10 or key == curses.KEY_ENTER or key == 13:
-				if bags[cursor+travel-1].get('file_kind') == 'folder':
+				if bag.get('file_kind') == 'folder':
 					if forward_page_history:
 						forward_page_history.clear()
-					back_page_history.append((bags[cursor+travel-1].get('drive_kind'), bags[cursor+travel-1].get('drive_i'), bags[cursor+travel-1].get('_id')))
+					back_page_history.append((bag.get('drive_kind'), bag.get('account'), bag.get('_id')))
 					if len(back_page_history) + len(forward_page_history) > max_page_history_length:
 						back_page_history.popleft()
 					break
@@ -206,21 +258,21 @@ def display(stdscr):
 				return
 			# delete
 			elif key == curses.KEY_BACKSPACE or key == 127:
-				prompt = 'delete \'{}\' (y/n)'.format(bags[cursor+travel-1].get('file_name'))
+				prompt = 'delete \'{}\' (y/n)'.format(bag.get('file_name'))
 				char = None
 				while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
 					status_line(stdscr, prompt)
 					char = stdscr.getch()
 					if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
-						# yes
-						if char == 121:
-							# delete it
-							if bags[cursor+travel-1].get('file_kind') == 'file':
+						# yes, delete it
+						if char == ord('y'):
+							drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
+							if bag.get('file_kind') == 'file':
 								status_line(stdscr, '...')
-								dump.delete_file(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'))
-							elif bags[cursor+travel-1].get('file_kind') == 'folder':
+								dump.delete_file(drive, bag.get('_id'))
+							elif bag.get('file_kind') == 'folder':
 								status_line(stdscr, '...')
-								dump.delete_folder(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'))
+								dump.delete_folder(drive, bag.get('_id'))
 							break
 						# otherwise
 						else:
@@ -260,17 +312,21 @@ def display(stdscr):
 							break
 						# scroll down
 						elif char == curses.KEY_DOWN:
-							if search_cursor < disp_height-1:
-								if search_cursor < len(search_bags):
-									search_cursor += 1
+							if search_cursor < min(len(search_bags), disp_height-1):
+								search_cursor += 1
 							elif search_travel < len(search_bags)-(disp_height-1):
 								search_travel += 1
+							else:
+								search_cursor, search_travel = 1, 0
 						# scroll up
 						elif char == curses.KEY_UP:
 							if search_cursor > 1:
 								search_cursor -= 1
 							elif search_travel > 0:
 								search_travel -= 1
+							else:
+								search_cursor = min(len(search_bags), disp_height-1)
+								search_travel = max(0, len(search_bags)-(disp_height-1))
 						# exit
 						elif char == 27:
 							query = ''
@@ -282,10 +338,11 @@ def display(stdscr):
 						status_line(stdscr, '...')
 						files = dump.query(query)
 						search_bags = []
-						for file_id, (file_name, file_kind, drive_kind, drive_i, date_modified) in files.items():
-							search_bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, '_id':file_id}))
+						for file_id, (file_name, file_kind, drive_kind, account, date_modified) in files.items():
+							search_bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, 'account':account, '_id':file_id}))
 						stdscr.clear()
 				else:
+					# exit
 					stdscr.clear()
 					for bag_i in range(0, min(len(bags), disp_height-1)):
 						row = bag_i+1
@@ -296,14 +353,16 @@ def display(stdscr):
 					stdscr.refresh()
 			# download
 			elif key == ord('d'):
-				if bags[cursor+travel-1].get('file_kind') == 'file':
+				drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
+				destination = '/Users/pickle/Downloads/'
+				if bag.get('file_kind') == 'file':
 					status_line(stdscr, '...')
-					dump.download_file(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'), '/Users/pickle/Downloads/')
-					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('file_name')))
-				elif bags[cursor+travel-1].get('file_kind') == 'folder':
+					dump.download_file(drive, bag.get('_id'), destination)
+					status_line(stdscr, 'downloaded \'{}\''.format(bag.get('file_name')))
+				elif bag.get('file_kind') == 'folder':
 					status_line(stdscr, '...')
-					dump.download_folder(dump.lookup[bags[cursor+travel-1].get('drive_kind')][bags[cursor+travel-1].get('drive_i')], bags[cursor+travel-1].get('_id'), bags[cursor+travel-1].get('file_name'), '/Users/pickle/Downloads/')
-					status_line(stdscr, 'downloaded \'{}\''.format(bags[cursor+travel-1].get('file_name')))
+					dump.download_folder(drive, bag.get('_id'), bag.get('file_name'), destination)
+					status_line(stdscr, 'downloaded \'{}\''.format(bag.get('file_name')))
 			# storage summary
 			elif key == ord(' '):
 				status_line(stdscr, '...')
@@ -382,11 +441,12 @@ def boot():
 	for drive_name in os.listdir('credentials'):
 		if drive_name.startswith('.'):
 			continue
-		lookup[drive_name] = []
-		for account in os.listdir(os.path.join('credentials', drive_name)):
-			if not account.isdigit():
+		lookup[drive_name] = {}
+		for account_id in os.listdir(os.path.join('credentials', drive_name)):
+			if not account_id.isdigit():
 				continue
-			lookup[drive_name].append(globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account)))
+			drive = globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account_id))
+			lookup[drive_name][drive.account] = drive
 	return lookup
 
 def main():

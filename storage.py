@@ -7,29 +7,44 @@ import ntpath
 import onedrivesdk
 from onedrivesdk import AuthProvider, HttpProvider, OneDriveClient
 import os
+from print_utils import random_string
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 import requests
+import shutil
 import sys
 
 # constants
 threshold = 1e6
+drive_classes = {'google': 'GDrive', 'dropbox': 'DBox', 'box': 'Box', 'onedrive': 'ODrive'}
 
 class Dump:
     def __init__(self, lookup={}):
         self.lookup = lookup
-    def add_drive(self, drive, drive_kind):
-        self.lookup[drive_kind].append(drive)
+    def add_drive(self, drive_kind, account, drive):
+        if not drive_kind in self.lookup:
+            self.lookup[drive_kind] = {}
+        self.lookup[drive_kind][account] = drive
+    def get_drive(self, drive_kind, account):
+        return self.lookup[drive_kind][account]
+    def get_drives(self):
+        return self.lookup
+    def remove_drive(self, drive_kind, account):
+        path = os.path.join('credentials', drive_kind, str(self.lookup[drive_kind][account]._id))
+        shutil.rmtree(path)
+        del self.lookup[drive_kind][account]
+        if not self.lookup[drive_kind]:
+            del self.lookup[drive_kind]
     def storage(self):
-        return {drive_kind:{'used':sum(drive.used_storage_bytes() for drive in drives), \
-                       'remaining':sum(drive.remaining_storage_bytes() for drive in drives)} \
+        return {drive_kind:{'used':sum(drive.used_storage_bytes() for drive in drives.values()), \
+                       'remaining':sum(drive.remaining_storage_bytes() for drive in drives.values())} \
                 for drive_kind, drives in self.lookup.items()}
     def query(self, query, drive=None):
         if drive:
             return drive.query(query)
         stuff = {}
         for drives in self.lookup.values():
-            for drive in drives:
+            for drive in drives.values():
                 stuff.update(drive.query(query))
         return stuff
     def files(self, drive=None, _id=None):
@@ -37,7 +52,7 @@ class Dump:
             return drive.files(_id)
         stuff = {}
         for drives in self.lookup.values():
-            for drive in drives:
+            for drive in drives.values():
                 stuff.update(drive.files())
         return stuff
     def download_folder(self, drive, _id, name, path):
@@ -97,7 +112,7 @@ class Dump:
                     return 'RIP, \'{}\' can\'t fit in this drive'.format(ntpath.basename(path))
             else:
                 for drives in self.lookup.values():
-                    for _drive in drives:
+                    for _drive in drives.values():
                         if size < _drive.remaining_storage_bytes()-threshold:
                             return self.add_folder(path, _drive, None, False)
                 return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
@@ -117,7 +132,7 @@ class Dump:
                     return 'RIP, there isn\'t enough space in this drive for \'{}\''.format(ntpath.basename(path))
             else:
                 for drives in self.lookup.values():
-                    for _drive in drives:
+                    for _drive in drives.values():
                         if os.path.getsize(path) < _drive.remaining_storage_bytes()-threshold:
                             if _drive.add_file(path):
                                 return
@@ -138,6 +153,7 @@ class GDrive(GoogleDrive):
         self._id = GDrive.count
         super(GDrive, self).__init__(self.boot(credentials))
         GDrive.count += 1
+        self.account = self.email()
     @staticmethod
     def credentials():
         # this is a new user, so build new credentials
@@ -165,10 +181,10 @@ class GDrive(GoogleDrive):
     def remaining_storage_bytes(self):
         return int(self.GetAbout()['quotaBytesTotal']) - self.used_storage_bytes()
     def query(self, query):
-        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self._id, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
+        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self.account, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
                 for file in self.ListFile({'q': 'title="{}" and trashed=false'.format(query)}).GetList()}
     def files(self, _id='root'):
-        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self._id, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
+        return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self.account, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
                 for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
     def download_file(self, _id, path):
         file = self.CreateFile({'id': _id})
@@ -207,6 +223,7 @@ class DBox(Dropbox):
         self._id = DBox.count
         super(DBox, self).__init__(self.boot(credentials))
         DBox.count += 1
+        self.account = self.email()
     @staticmethod
     def credentials(auth_code=None):
         credentials = os.path.join('credentials/dropbox', str(DBox.count))
@@ -235,10 +252,10 @@ class DBox(Dropbox):
     def remaining_storage_bytes(self):
         return self.users_get_space_usage().allocation.get_individual().allocated - self.used_storage_bytes()
     def query(self, query):
-        return {file.metadata.id:(file.metadata.name, 'folder' if isinstance(file.metadata, FolderMetadata) else 'file', 'dropbox', self._id, '?' if isinstance(file.metadata, FolderMetadata) else file.metadata.client_modified.strftime('%m/%d/%y')) \
+        return {file.metadata.id:(file.metadata.name, 'folder' if isinstance(file.metadata, FolderMetadata) else 'file', 'dropbox', self.account, '?' if isinstance(file.metadata, FolderMetadata) else file.metadata.client_modified.strftime('%m/%d/%y')) \
                 for file in self.files_search('', query).matches}
     def files(self, _id=''):
-        return {file.id:(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', 'dropbox', self._id, '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y')) \
+        return {file.id:(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', 'dropbox', self.account, '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y')) \
                 for file in self.files_list_folder(_id).entries}
     def download_file(self, _id, path):
         meta = self.files_get_metadata(_id)
@@ -270,6 +287,7 @@ class Box(Client):
         self.username = None
         super(Box, self).__init__(self.boot(credentials))
         Box.count += 1
+        self.account = self.email()
     @staticmethod
     def credentials(auth_code=None):
         credentials = os.path.join('credentials/box', str(Box.count))
@@ -317,10 +335,10 @@ class Box(Client):
     def remaining_storage_bytes(self):
         return self.user().get().space_amount - self.used_storage_bytes()
     def query(self, query):
-        return {item.id:(item.name, item.type, 'box', self._id, '?') \
+        return {item.id:(item.name, item.type, 'box', self.account, '?') \
                 for item in self.search().query(query)}
     def files(self, _id='0'):
-        return {item.id:(item.name, item.type, 'box', self._id, '?') \
+        return {item.id:(item.name, item.type, 'box', self.account, '?') \
                 for item in self.folder(_id).get_items()}
     def download_file(self, _id, path):
         file = self.file(_id)
@@ -353,6 +371,7 @@ class ODrive(OneDriveClient):
         self._id = ODrive.count
         super(ODrive, self).__init__(*self.boot(credentials))
         ODrive.count += 1
+        self.account = self.email()
     @staticmethod
     def credentials(auth_code=None):
         credentials = os.path.join('credentials/onedrive', str(ODrive.count))
@@ -387,7 +406,7 @@ class ODrive(OneDriveClient):
         auth_provider.refresh_token()
         return ODrive.base_url, auth_provider, http_provider
     def email(self):
-        return '?'
+        return random_string(length=5)
     def _quota_dict(self):
         return requests.get(self.base_url + 'drive/', headers = {
                             'Authorization': 'bearer {access_token}'.format(access_token = str(self.auth_provider.access_token)),
@@ -397,10 +416,10 @@ class ODrive(OneDriveClient):
     def remaining_storage_bytes(self):
         return self._quota_dict()['remaining']
     def query(self, query):
-        return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self._id, item.last_modified_date_time.strftime('%m/%d/%y')) \
+        return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self.account, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id='root').search(q=query).get().items()}
     def files(self, _id='root'):
-        return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self._id, item.last_modified_date_time.strftime('%m/%d/%y')) \
+        return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self.account, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id=_id).children.request().get()}
     def download_file(self, _id, path):
         item = self.item(drive='me', id=_id)
