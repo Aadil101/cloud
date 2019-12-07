@@ -1,4 +1,3 @@
-# lots o' imports
 import curses
 import os
 from print_utils import *
