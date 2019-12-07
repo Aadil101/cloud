@@ -7,7 +7,6 @@ import ntpath
 import onedrivesdk
 from onedrivesdk import AuthProvider, HttpProvider, OneDriveClient
 import os
-from print_utils import random_string
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 import requests
@@ -407,7 +406,9 @@ class ODrive(OneDriveClient):
         auth_provider.refresh_token()
         return ODrive.base_url, auth_provider, http_provider
     def email(self):
-        return random_string(length=5)
+        return 'id: {}'.format(requests.get(self.base_url + 'drive/', headers = {
+                            'Authorization': 'bearer {access_token}'.format(access_token = str(self.auth_provider.access_token)),
+                            'content-type': 'application/json'}).json()['owner']['user']['id'])
     def _quota_dict(self):
         return requests.get(self.base_url + 'drive/', headers = {
                             'Authorization': 'bearer {access_token}'.format(access_token = str(self.auth_provider.access_token)),
