@@ -158,6 +158,7 @@ class GDrive(GoogleDrive):
     def credentials():
         # this is a new user, so build new credentials
         gauth = GoogleAuth()
+        GoogleAuth.DEFAULT_SETTINGS['client_config_file'] = 'credentials/google/client_secrets.json'
         credentials = os.path.join('credentials/google', str(GDrive.count))
         os.mkdir(credentials)
         gauth.LocalWebserverAuth()
