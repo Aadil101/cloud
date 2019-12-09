@@ -46,34 +46,39 @@ class Dump:
             for drive in drives.values():
                 stuff.update(drive.query(query))
         return stuff
-    def files(self, drive=None, _id=None):
-        if drive and _id:
-            return drive.files(_id)
+    def files(self, drive=None, folder_id=None):
+        if drive and folder_id:
+            return drive.files(folder_id)
         stuff = {}
         for drives in self.lookup.values():
             for drive in drives.values():
                 stuff.update(drive.files())
         return stuff
-    def download_folder(self, drive, _id, name, path):
-        stack = [(_id, name)]
-        id_to_path = {_id: path}
+    def move(self, drive_kind, account, _id, target_drive_kind, target_account, target_folder_id):
+        if drive_kind == target_drive_kind and account == target_account:
+            self.get_drive(drive_kind, account).move(_id, target_folder_id)
+        else:
+            print('lolz')
+    def download_folder(self, drive, folder_id, name, path):
+        stack = [(folder_id, name)]
+        id_to_path = {folder_id: path}
         while stack:
-            folder_id, folder_name = stack.pop()
-            folder_path = id_to_path[folder_id]
-            os.mkdir(os.path.join(folder_path, folder_name))
-            for file_id, (file_name, file_kind, _, __, ___) in self.files(drive, folder_id).items():
+            curr_folder_id, curr_folder_name = stack.pop()
+            curr_folder_path = id_to_path[curr_folder_id]
+            os.mkdir(os.path.join(curr_folder_path, curr_folder_name))
+            for file_id, (file_name, file_kind, _, __, ___) in self.files(drive, curr_folder_id).items():
                 if file_kind == 'folder':
-                    id_to_path[file_id] = os.path.join(folder_path, folder_name)
+                    id_to_path[file_id] = os.path.join(curr_folder_path, curr_folder_name)
                     stack.append((file_id, file_name))
                 else:
-                    self.download_file(drive, file_id, os.path.join(folder_path, folder_name))
-    def download_file(self, drive, _id, path):
-        drive.download_file(_id, path)
-    def delete_folder(self, drive, _id):
-        drive.delete_folder(_id)
-    def delete_file(self, drive, _id):
-        drive.delete_file(_id)
-    def add_folder(self, path, drive=None, folder=None, size_check=True):
+                    self.download_file(drive, file_id, os.path.join(curr_folder_path, curr_folder_name))
+    def download_file(self, drive, folder_id, path):
+        drive.download_file(folder_id, path)
+    def delete_folder(self, drive, folder_id):
+        drive.delete_folder(folder_id)
+    def delete_file(self, drive, file_id):
+        drive.delete_file(file_id)
+    def add_folder(self, path, drive=None, folder_id=None, size_check=True):
         if os.path.isdir(path):
             path = path.rstrip('/')
             # optionally check size of directory
@@ -90,21 +95,21 @@ class Dump:
             if drive:
                 if not size_check or size < drive.remaining_storage_bytes()-threshold:
                     path_to_id = {}
-                    if folder:
-                        path_to_id[os.path.join(folder, ntpath.basename(path))] = drive.add_folder(path, folder)
+                    if folder_id:
+                        path_to_id[os.path.join(folder_id, ntpath.basename(path))] = drive.add_folder(path, folder_id)
                     else:
                         path_to_id[ntpath.basename(path)] = drive.add_folder(path)
                     for root, dirs, files in os.walk(path):
                         local = root[root.find(ntpath.basename(path)):]
                         for _dir in dirs:
-                            if folder:
-                                path_to_id[os.path.join(folder, local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[os.path.join(folder, local)])
+                            if folder_id:
+                                path_to_id[os.path.join(folder_id, local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[os.path.join(folder_id, local)])
                             else:
                                 path_to_id[os.path.join(local, _dir)] = drive.add_folder(os.path.join(root, _dir), path_to_id[local])
                         for file in files:
                             if not file.startswith('.'):
-                                if folder:
-                                    drive.add_file(os.path.join(root, file), path_to_id[os.path.join(folder, local)])
+                                if folder_id:
+                                    drive.add_file(os.path.join(root, file), path_to_id[os.path.join(folder_id, local)])
                                 else:
                                     drive.add_file(os.path.join(root, file), path_to_id[local])
                 else:
@@ -117,12 +122,12 @@ class Dump:
                 return 'RIP, there isn\'t enough space anywhere for \'{}\''.format(ntpath.basename(path))
         else:
             return 'RIP, folder doesn\'t exist at \'{}\''.format(path)
-    def add_file(self, path, drive=None, folder=None):
+    def add_file(self, path, drive=None, folder_id=None):
         if os.path.isfile(path):
             if drive:
                 if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
-                    if folder:
-                        if not drive.add_file(path, folder):
+                    if folder_id:
+                        if not drive.add_file(path, folder_id):
                             return 'RIP, \'{}\' already exists in this directory'.format(ntpath.basename(path))
                     else:
                         if not drive.add_file(path):
@@ -183,35 +188,42 @@ class GDrive(GoogleDrive):
     def query(self, query):
         return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self.account, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
                 for file in self.ListFile({'q': 'title="{}" and trashed=false'.format(query)}).GetList()}
-    def files(self, _id='root'):
+    def files(self, folder_id='root'):
         return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self.account, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
-                for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(_id)}).GetList()}
-    def download_file(self, _id, path):
+                for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(folder_id)}).GetList()}
+    def move(self, _id, target_folder_id):
         file = self.CreateFile({'id': _id})
+        while True:
+            file['parents'] = [{'kind': 'drive#fileLink', 'id': target_folder_id}]
+            file.Upload()
+            if _id in self.files(target_folder_id):
+                break
+    def download_file(self, file_id, path):
+        file = self.CreateFile({'id': file_id})
         if file['mimeType'] in mimetypes:
             download_type, download_ext = mimetypes[file['mimeType']]
             file.GetContentFile(os.path.join(path, file['title'].replace('/', u'\u2215')+download_ext), mimetype=download_type)
         else:
             file.GetContentFile(os.path.join(path, file['title']), mimetype=file['mimeType'])
-    def delete_folder(self, _id):
-        file = self.CreateFile({'id': _id})
+    def delete_folder(self, folder_id):
+        file = self.CreateFile({'id': folder_id})
         file.Trash()
-    def delete_file(self, _id):
-        file = self.CreateFile({'id': _id})
+    def delete_file(self, file_id):
+        file = self.CreateFile({'id': file_id})
         file.Trash()
-    def add_folder(self, path, folder='root'):
+    def add_folder(self, path, folder_id='root'):
         folder_metadata = {'title':ntpath.basename(path), 'mimeType':'application/vnd.google-apps.folder',
-                            'parents':[{'id':folder}]}
+                            'parents':[{'id':folder_id}]}
         new_folder = self.CreateFile(folder_metadata)
         new_folder.Upload()
         return new_folder['id']
-    def add_file(self, path, folder='root'):
-        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
+    def add_file(self, path, folder_id='root'):
+        existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
             file = self.CreateFile({'title':ntpath.basename(path), 
-                                'parents':[{'kind':'drive#fileLink', 'id':folder}]})
+                                'parents':[{'kind':'drive#fileLink', 'id':folder_id}]})
             file.SetContentFile(path)
             file.Upload()
             return True
@@ -254,30 +266,33 @@ class DBox(Dropbox):
     def query(self, query):
         return {file.metadata.id:(file.metadata.name, 'folder' if isinstance(file.metadata, FolderMetadata) else 'file', 'dropbox', self.account, '?' if isinstance(file.metadata, FolderMetadata) else file.metadata.client_modified.strftime('%m/%d/%y')) \
                 for file in self.files_search('', query).matches}
-    def files(self, _id=''):
+    def files(self, folder_id=''):
         return {file.id:(file.name, 'folder' if isinstance(file, FolderMetadata) else 'file', 'dropbox', self.account, '?' if isinstance(file, FolderMetadata) else file.client_modified.strftime('%m/%d/%y')) \
-                for file in self.files_list_folder(_id).entries}
-    def download_file(self, _id, path):
-        meta = self.files_get_metadata(_id)
-        self.files_download_to_file(os.path.join(path, meta.name), _id)
-    def delete_folder(self, _id):
-        self.delete(_id)
-    def delete_file(self, _id):
-        self.delete(_id)
-    def add_folder(self, path, folder=''):
-        new_path = os.path.join(folder, ntpath.basename(path), 'test.txt')
+                for file in self.files_list_folder(folder_id).entries}
+    def move(self, _id, target_folder_id):
+        file_name = self.files_get_metadata(_id).name
+        self.files_move(_id, os.path.join(target_folder_id, file_name))
+    def download_file(self, file_id, path):
+        meta = self.files_get_metadata(file_id)
+        self.files_download_to_file(os.path.join(path, meta.name), file_id)
+    def delete_folder(self, folder_id):
+        self.files_delete(folder_id)
+    def delete_file(self, file_id):
+        self.files_delete(file_id)
+    def add_folder(self, path, folder_id=''):
+        new_path = os.path.join(folder_id, ntpath.basename(path), 'test.txt')
         self.files_upload(None, new_path)
         self.files_delete(new_path)
-        return self.files_get_metadata(os.path.join(folder, ntpath.basename(path))).id
-    def add_file(self, path, folder=''):
-        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
+        return self.files_get_metadata(os.path.join(folder_id, ntpath.basename(path))).id
+    def add_file(self, path, folder_id=''):
+        existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
             with open(path, 'rb') as file:
-                if folder == '' or len(folder) < 3 or folder[:3] != 'id:':
-                    folder = '/' + folder
-                self.files_upload(file.read(), os.path.join(folder, ntpath.basename(path)))
+                if folder_id == '' or len(folder_id) < 3 or folder_id[:3] != 'id:':
+                    folder_id = '/' + folder_id
+                self.files_upload(file.read(), os.path.join(folder_id, ntpath.basename(path)))
             return True
 
 class Box(Client):
@@ -337,26 +352,34 @@ class Box(Client):
     def query(self, query):
         return {item.id:(item.name, item.type, 'box', self.account, '?') \
                 for item in self.search().query(query)}
-    def files(self, _id='0'):
+    def files(self, folder_id='0'):
         return {item.id:(item.name, item.type, 'box', self.account, '?') \
-                for item in self.folder(_id).get_items()}
-    def download_file(self, _id, path):
-        file = self.file(_id)
+                for item in self.folder(folder_id).get_items()}
+    def move(self, _id, target_folder_id):
+        item = None
+        try:
+            item = self.file(_id).get()
+        except:
+            item = self.folder(_id).get()
+        finally:
+            item.move(self.folder(target_folder_id))
+    def download_file(self, file_id, path):
+        file = self.file(file_id)
         with open(os.path.join(path, file.get().name), 'wb') as out_file:
             file.download_to(out_file)
             out_file.close()
-    def delete_folder(self, _id):
-        self.folder(_id).delete()
-    def delete_file(self, _id):
-        self.file(_id).delete()
-    def add_folder(self, path, folder='0'):
-        return self.folder(folder).create_subfolder(ntpath.basename(path)).id
-    def add_file(self, path, folder='0'):
-        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
+    def delete_folder(self, folder_id):
+        self.folder(folder_id).delete()
+    def delete_file(self, file_id):
+        self.file(file_id).delete()
+    def add_folder(self, path, folder_id='0'):
+        return self.folder(folder_id).create_subfolder(ntpath.basename(path)).id
+    def add_file(self, path, folder_id='0'):
+        existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
-            self.folder(folder).upload(path)
+            self.folder(folder_id).upload(path)
             return True
 
 class ODrive(OneDriveClient):
@@ -420,23 +443,25 @@ class ODrive(OneDriveClient):
     def query(self, query):
         return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self.account, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id='root').search(q=query).get().items()}
-    def files(self, _id='root'):
+    def files(self, folder_id='root'):
         return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self.account, item.last_modified_date_time.strftime('%m/%d/%y')) \
-                for item in self.item(drive='me', id=_id).children.request().get()}
-    def download_file(self, _id, path):
-        item = self.item(drive='me', id=_id)
+                for item in self.item(drive='me', id=folder_id).children.request().get()}
+    def move(self, _id, target_folder_id):
+        self.item(drive='me', id=_id).move
+    def download_file(self, file_id, path):
+        item = self.item(drive='me', id=file_id)
         item.download(os.path.join(path, item.request().get().name))
-    def delete_folder(self, _id):
-        self.item(id=_id).delete()
-    def delete_file(self, _id):
-        self.item(id=_id).delete()
-    def add_folder(self, path, folder='root'):
+    def delete_folder(self, file_id):
+        self.item(id=file_id).delete()
+    def delete_file(self, file_id):
+        self.item(id=file_id).delete()
+    def add_folder(self, path, folder_id='root'):
         item = onedrivesdk.Item({'name':ntpath.basename(path), 'folder':onedrivesdk.Folder()})
-        return self.item(drive='me', id=folder).children.add(item).id
-    def add_file(self, path, folder='root'):
-        existing = {title for title, _, __, ___, ___ in self.files(folder).values()}
+        return self.item(drive='me', id=folder_id).children.add(item).id
+    def add_file(self, path, folder_id='root'):
+        existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
         if ntpath.basename(path) in existing:
             return False
         else:
-            self.item(drive='me', id=folder).children[ntpath.basename(path)].upload(path)
+            self.item(drive='me', id=folder_id).children[ntpath.basename(path)].upload(path)
             return True

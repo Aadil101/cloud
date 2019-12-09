@@ -14,6 +14,11 @@ sys.stdout = open('message.log','w')
 dump = None
 max_page_history_length = 100
 
+# change cwd
+abspath = os.path.abspath(__file__)
+dname = os.path.dirname(abspath)
+os.chdir(dname)
+
 # method to tell you how I feel
 def status_line(stdscr, message):
 	stdscr.move(0, 0)
@@ -25,8 +30,12 @@ def status_line(stdscr, message):
 def display(stdscr):
 	stdscr.keypad(True)	# go ahead, type
 	curses.curs_set(0)	# but no cursor for you 
+	curses.start_color()  # initiate colors
+	curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_BLUE)   # boom
 	page_history, page_i = [(None, None, None)], 0	# bunch of (drive_kind, account, folder_id) tuples
-	travel, cursor, reverse, refresh = 0, 1, False, True
+	curr_drive_kind, curr_account, curr_folder_id = None, None, None   # holds details for current directory
+	bags, to_move = [], {} # to hold stuff
+	prompt, travel, cursor, reverse, refresh, move, where = '', 0, 1, False, True, False, False
 	while True:
 		# maybe refresh
 		if refresh:
@@ -46,7 +55,9 @@ def display(stdscr):
 		# show as much stuff in current folder as possible
 		for bag_i in range(0, min(len(bags), disp_height-1)):
 			row = bag_i+1
-			if row == cursor:
+			if bags[bag_i+travel].get('_id') in to_move:
+				stdscr.addstr(row, 0, str(bags[bag_i+travel]), curses.color_pair(1))	# to move
+			elif row == cursor:
 				stdscr.addstr(row, 0, str(bags[bag_i+travel]), curses.A_STANDOUT)	# cursor 
 			else:
 				stdscr.addstr(row, 0, str(bags[bag_i+travel]))
@@ -56,16 +67,18 @@ def display(stdscr):
 		# accept keystroke
 		key = stdscr.getch()
 		# clear the status line
-		status_line(stdscr, '')
+		status_line(stdscr, prompt)
 		# account overview
 		if key == ord('a'):
+			if move or where:
+				continue
 			account_travel, account_cursor, account_refresh, sacks = 0, 1, True, []
 			while True:
 				if account_refresh:
 					account_travel, account_cursor, account_refresh, sacks = 0, 1, False, []
-					for drive_name, drives in dump.get_drives().items():
+					for drive_kind, drives in dump.get_drives().items():
 						for drive in drives.values():
-							sacks.append(Sack({'drive_kind': drive_name, 'account': drive.account}))
+							sacks.append(Sack({'drive_kind': drive_kind, 'account': drive.account}))
 				key = None
 				while True:
 					# refresh screen
@@ -192,8 +205,11 @@ def display(stdscr):
 						break
 				if key == 27:
 					break
+			prompt = ''
 		# delete
 		elif key == curses.KEY_BACKSPACE or key == 127:
+			if move or where:
+				continue
 			prompt = 'delete \'{}\' (y/n)'.format(bag.get('file_name'))
 			char = None
 			while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
@@ -217,9 +233,11 @@ def display(stdscr):
 				status_line(stdscr, '')
 				continue
 			status_line(stdscr, '')
-			refresh = True
+			refresh, prompt = True, ''
 		# download
 		elif key == ord('d'):
+			if move or where:
+				continue
 			drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
 			destination = '/Users/pickle/Downloads/'
 			if bag.get('file_kind') == 'file':
@@ -230,15 +248,37 @@ def display(stdscr):
 				status_line(stdscr, '...')
 				dump.download_folder(drive, bag.get('_id'), bag.get('file_name'), destination)
 				status_line(stdscr, 'downloaded \'{}\''.format(bag.get('file_name')))
-		# enter folder
+		# enter
 		elif key == 10 or key == curses.KEY_ENTER or key == 13:
-			if bag.get('file_kind') == 'folder':
+			# if moving, toggle item
+			if move:
+				_id = bag.get('_id')
+				if _id in to_move:
+					del to_move[_id]
+				else:
+					to_move[_id] = (bag.get('drive_kind'), bag.get('account'))
+			# enter folder
+			elif bag.get('file_kind') == 'folder':
 				del page_history[page_i+1:]
 				page_history.append((bag.get('drive_kind'), bag.get('account'), bag.get('_id')))
 				page_i += 1
 				if len(page_history) > max_page_history_length:
 					page_history.pop(0)
 				travel, cursor, reverse, refresh = 0, 1, False, True
+		# move
+		elif key == ord('m'):
+			# phase 2: ask where to move items
+			if move:
+				move, where, refresh, prompt = False, True, False, 'go to desired folder & hit \'m\'.'
+			# phase 3: move items to desired folder
+			elif where:
+				for _id, (drive_kind, account) in to_move.items():
+					dump.move(drive_kind, account, _id, curr_drive_kind, curr_account, curr_folder_id)
+				where, to_move, refresh, prompt = False, {}, True, 'moved.'
+			# phase 1: ask what items to move
+			else:
+				move, to_move, prompt = True, {bag.get('_id'):(bag.get('drive_kind'), bag.get('account'))}, 'pick items to move & hit \'m\'.'
+			status_line(stdscr, prompt)
 		# page retreat
 		elif key == curses.KEY_LEFT:
 			if page_i > 0:
@@ -251,11 +291,18 @@ def display(stdscr):
 				travel, cursor, reverse, refresh = 0, 1, False, True
 		# quit
 		elif key == 27:	 # escape/alt key
-			curses.nocbreak()
-			stdscr.keypad(False)
-			curses.echo()
-			curses.endwin()
-			return
+			if move:
+				move, to_move, prompt = False, {}, ''
+				status_line(stdscr, prompt)
+			elif where:
+				where, to_move, prompt = False, {}, ''
+				status_line(stdscr, prompt)
+			else:
+				curses.nocbreak()
+				stdscr.keypad(False)
+				curses.echo()
+				curses.endwin()
+				return
 		# scroll down
 		elif key == curses.KEY_DOWN:
 			if cursor < min(len(bags), disp_height-1):
@@ -275,6 +322,8 @@ def display(stdscr):
 				travel = max(0, len(bags)-(disp_height-1))
 		# search
 		elif key == ord('s'):
+			if move or where:
+				continue
 			prompt = 'search: '
 			query = None
 			search_bags = []
@@ -349,14 +398,19 @@ def display(stdscr):
 					else:
 						stdscr.addstr(row, 0, str(bags[bag_i+travel]))
 				stdscr.refresh()
+			prompt = ''
 		# storage summary
 		elif key == ord(' '):
+			if move or where:
+				continue
 			status_line(stdscr, '...')
-			summary = ', '.join([drive_name+': '+print_bytes(details['remaining']) \
-									for drive_name, details in dump.storage().items()])
+			summary = ', '.join([drive_kind+': '+print_bytes(details['remaining']) \
+									for drive_kind, details in dump.storage().items()])
 			status_line(stdscr, summary)
 		# upload
 		elif key == ord('u'):
+			if move or where:
+				continue
 			prompt = 'upload: '
 			path = None
 			completer = Completer()
@@ -413,7 +467,7 @@ def display(stdscr):
 			else:
 				status_line(stdscr, '')
 				continue
-			refresh = True
+			refresh, prompt = True, ''
 		# sort files by file kind
 		elif key == ord('1'):
 			bags.sort(key=lambda bag: bag.get('file_kind'), reverse=reverse)
