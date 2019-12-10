@@ -206,8 +206,7 @@ class GDrive(GoogleDrive):
         else:
             file.GetContentFile(os.path.join(path, file['title']), mimetype=file['mimeType'])
     def delete_folder(self, folder_id):
-        file = self.CreateFile({'id': folder_id})
-        file.Trash()
+        self.delete_file(folder_id)
     def delete_file(self, file_id):
         file = self.CreateFile({'id': file_id})
         file.Trash()
@@ -276,7 +275,7 @@ class DBox(Dropbox):
         meta = self.files_get_metadata(file_id)
         self.files_download_to_file(os.path.join(path, meta.name), file_id)
     def delete_folder(self, folder_id):
-        self.files_delete(folder_id)
+        self.delete_file(folder_id)
     def delete_file(self, file_id):
         self.files_delete(file_id)
     def add_folder(self, path, folder_id=''):
@@ -447,12 +446,22 @@ class ODrive(OneDriveClient):
         return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self.account, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id=folder_id).children.request().get()}
     def move(self, _id, target_folder_id):
-        self.item(drive='me', id=_id).move
+        item = self.item(drive='me', id=_id).request().get()
+        folder = self.item(drive='me', id=target_folder_id).request().get()
+        folder_path = None
+        if folder.name == 'root':
+            folder_path = '/drive/items/root'
+        else:
+            folder_path = os.path.join(folder.parent_reference.path, folder.name)
+        ref = onedrivesdk.ItemReference()
+        ref.path = folder_path
+        self.item(drive='me', id=_id).copy(name=item.name, parent_reference=ref).post()
+        self.delete_file(_id)
     def download_file(self, file_id, path):
         item = self.item(drive='me', id=file_id)
         item.download(os.path.join(path, item.request().get().name))
-    def delete_folder(self, file_id):
-        self.item(id=file_id).delete()
+    def delete_folder(self, folder_id):
+        self.delete_file(folder_id)
     def delete_file(self, file_id):
         self.item(id=file_id).delete()
     def add_folder(self, path, folder_id='root'):
