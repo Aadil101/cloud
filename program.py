@@ -5,7 +5,6 @@ from print_utils import *
 from storage import *
 import re
 import string
-import sys
 import webbrowser
 
 # global variables
@@ -399,46 +398,33 @@ def display(stdscr):
 		elif key == ord('u'):
 			if move or where:
 				continue
-			prompt = 'upload: '
-			path = None
-			completer = Completer()
-			# invalid path loop
-			while path != '':
-				if not path:
-					path = ''
-				# print path char-by-char loop
-				while True:
-					status_line(stdscr, prompt)
-					stdscr.addstr(path)
-					char = stdscr.getch()
-					# delete
-					if char == 127:
-						path = path[:-1]
-					# delete chunk
-					elif char == 23:
-						path = path.strip()
-						match = re.search('[^' + re.escape(string.printable[:62]) + ']', path[::-1])
-						if match:
-							path = path[:-match.start()]
-						else: 
-							path = ''
-					# tab
-					elif char == 9:
-						matches = completer.complete(path)
-						if matches and len(matches) == 1:
-							path = matches[0]
-					# enter
-					elif char == curses.KEY_ENTER or char == 10 or char == 13:
-						break
-					# exit
-					elif char == 27:
+			prompt, path, completer = 'upload: ', '', Completer()
+			# print path char-by-char loop
+			while True:
+				status_line(stdscr, prompt+path)
+				char = stdscr.getch()
+				# delete
+				if char == 127:
+					path = path[:-1]
+				# delete chunk
+				elif char == 23:
+					path = path.strip()
+					match = re.search('[^' + re.escape(string.printable[:62]) + ']', path[::-1])
+					if match:
+						path = path[:-match.start()]
+					else: 
 						path = ''
+				# tab
+				elif char == 9:
+					matches = completer.complete(path)
+					if matches and len(matches) == 1:
+						path = matches[0]
+				# enter
+				elif char == curses.KEY_ENTER or char == 10 or char == 13:
+					path = os.path.expanduser(path)
+					if path == '':
+						status_line(stdscr, '')
 						break
-					# character
-					else:
-						path += chr(char)
-				path = os.path.expanduser(path)
-				if path != '':
 					if os.path.exists(path):
 						error = None
 						status_line(stdscr, '...')
@@ -446,16 +432,20 @@ def display(stdscr):
 							error = dump.add_file(path, curr_drive, curr_folder_id)
 						elif os.path.isdir(path):
 							error = dump.add_folder(path, curr_drive, curr_folder_id)
-						if error:
-							prompt = error + ', try again: '
-						else:
+						if not error:
+							refresh = True
 							break
+						else:
+							prompt = error + ', try again: '
 					else:
 						prompt = 'nope, try again: '
-			else:
-				status_line(stdscr, '')
-				continue
-			refresh, prompt = True, ''
+				# exit
+				elif char == 27:
+					status_line(stdscr, '')
+					break
+				# character
+				else:
+					path += chr(char)
 		# sort files by file kind
 		elif key == ord('1'):
 			bags.sort(key=lambda bag: bag.get('file_kind'), reverse=reverse)

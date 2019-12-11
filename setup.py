@@ -8,7 +8,6 @@ setup(
     author_email='aadilislam101@gmail.com',
     install_requires=[
         'boxsdk',
-        'cursor',
         'datetime',
         'dropbox',
         'keyring',

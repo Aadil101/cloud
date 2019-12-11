@@ -12,7 +12,6 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 import requests
 import shutil
-import sys
 
 # constants
 threshold = 1e6
