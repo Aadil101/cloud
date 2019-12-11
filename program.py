@@ -1,14 +1,12 @@
 import curses
 import os
+import logging
 from print_utils import *
 from storage import *
 import re
 import string
 import sys
 import webbrowser
-
-# for debugging
-sys.stdout = open('message.log','w')
 
 # global variables
 dump = None
@@ -35,7 +33,7 @@ def display(stdscr):
 	page_history, page_i = [(None, None, None)], 0	# bunch of (drive_kind, account, folder_id) tuples
 	curr_drive_kind, curr_account, curr_folder_id = None, None, None   # holds details for current directory
 	bags, to_move = [], {} # to hold stuff
-	prompt, travel, cursor, reverse, refresh, move, where = '', 0, 1, False, True, False, False
+	prompt, keep_prompt, travel, cursor, reverse, refresh, move, where = '', False, 0, 1, False, True, False, False
 	while True:
 		# maybe refresh
 		if refresh:
@@ -67,173 +65,174 @@ def display(stdscr):
 		# accept keystroke
 		key = stdscr.getch()
 		# clear the status line
-		status_line(stdscr, prompt)
+		if keep_prompt:
+			status_line(stdscr, prompt)
+		else:
+			status_line(stdscr, '')
 		# account overview
 		if key == ord('a'):
 			if move or where:
 				continue
-			account_travel, account_cursor, account_refresh, sacks = 0, 1, True, []
+			account_travel, account_cursor, account_refresh, sacks, key = 0, 1, True, [], None
 			while True:
 				if account_refresh:
 					account_travel, account_cursor, account_refresh, sacks = 0, 1, False, []
 					for drive_kind, drives in dump.get_drives().items():
 						for drive in drives.values():
 							sacks.append(Sack({'drive_kind': drive_kind, 'account': drive.account}))
-				key = None
-				while True:
 					# refresh screen
 					stdscr.clear()
-					for drive_i in range(0, min(len(sacks), disp_height-1)):
-						row = drive_i+1
-						if row == account_cursor:
-							stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]), curses.A_STANDOUT)	# cursor_2
-						else:
-							stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
-					stdscr.refresh()
-					# selected sack
-					sack = sacks[account_cursor+account_travel-1]
-					# accept keystroke
-					key = stdscr.getch()
-					# scroll down
-					if key == curses.KEY_DOWN:
-						if account_cursor < min(len(sacks), disp_height-1):
-							account_cursor += 1
-						elif account_travel < len(sacks)-(disp_height-1):
-							account_travel += 1
-						else:
-							account_cursor, account_travel = 1, 0
-					# scroll up
-					elif key == curses.KEY_UP:
-						if account_cursor > 1:
-							account_cursor -= 1
-						elif account_travel > 0:
-							account_travel -= 1
-						else:
-							account_cursor = min(len(sacks), disp_height-1)
-							account_travel = max(0, len(sacks)-(disp_height-1))
-					# delete account
-					elif key == curses.KEY_BACKSPACE or key == 127:
-						prompt = 'delete \'{}\' \'{}\' (y/n)'.format(sack.get('drive_kind'), sack.get('account'))
-						char = None
-						while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
-							status_line(stdscr, prompt)
-							char = stdscr.getch()
-							if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
-								# yes, delete it
-								if char == ord('y'):
-									dump.remove_drive(sack.get('drive_kind'), sack.get('account'))
-									break
-								# otherwise
-								else:
-									prompt = 'nope, try again (y/n)'
-						else:
+				# show as many accounts as possible
+				for drive_i in range(0, min(len(sacks), disp_height-1)):
+					row = drive_i+1
+					if row == account_cursor:
+						stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]), curses.A_STANDOUT)	# cursor_2
+					else:
+						stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
+				stdscr.refresh()
+				# selected sack
+				sack = sacks[account_cursor+account_travel-1]
+				# accept keystroke
+				key = stdscr.getch()
+				# scroll down
+				if key == curses.KEY_DOWN:
+					if account_cursor < min(len(sacks), disp_height-1):
+						account_cursor += 1
+					elif account_travel < len(sacks)-(disp_height-1):
+						account_travel += 1
+					else:
+						account_cursor, account_travel = 1, 0
+				# scroll up
+				elif key == curses.KEY_UP:
+					if account_cursor > 1:
+						account_cursor -= 1
+					elif account_travel > 0:
+						account_travel -= 1
+					else:
+						account_cursor = min(len(sacks), disp_height-1)
+						account_travel = max(0, len(sacks)-(disp_height-1))
+				# delete account
+				elif key == curses.KEY_BACKSPACE or key == 127:
+					prompt = 'delete \'{}\' \'{}\' (y/n)'.format(sack.get('drive_kind'), sack.get('account'))
+					char = None
+					while True:
+						status_line(stdscr, prompt)
+						char = stdscr.getch()
+						# yes, delete it
+						if char == ord('y'):
+							dump.remove_drive(sack.get('drive_kind'), sack.get('account'))
+							account_refresh, refresh = True, True
 							status_line(stdscr, '')
-							continue
-						status_line(stdscr, '')
-						account_refresh, refresh = True, True
-						break
-					# add account
-					elif key == ord('a'):
-						prompt = 'account type: '
-						drive_class = ''
-						char = None
-						while True:
-							status_line(stdscr, prompt)
-							stdscr.addstr(drive_class)
-							char = stdscr.getch()
-							# delete
-							if char == 127:
-								drive_class = drive_class[:-1]
-							elif char == 23:
-								drive_class = drive_class.strip()
-								match = re.search('[^' + re.escape(string.printable[:62]) + ']', drive_class[::-1])
-								if match:
-									drive_class = drive_class[:-match.start()]
-								else: 
-									drive_class = ''
-							# enter
-							elif char == curses.KEY_ENTER or char == 10 or char == 13:
-								if drive_class in drive_classes:
-									break
-								else:
-									prompt = 'nope, try again: '
-							# exit
-							elif char == 27:
-								break
-							# character
-							else:
-								drive_class += chr(char)
-						if char == 27:
 							break
-						status, output = globals()[drive_classes[drive_class]].credentials()
-						credentials = None
-						if status == 'success':
-							credentials = output
-							drive = globals()[drive_classes[drive_class]](credentials)
-							dump.add_drive(drive_class, drive.account, drive)
-						elif status == 'pending':
-							webbrowser.open(output)
-							prompt = 'code: '
-							code = ''
-							char = None
-							while True:
-								status_line(stdscr, prompt)
-								stdscr.addstr(code)
-								char = stdscr.getch()
-								# delete
-								if char == 127:
-									code = code[:-1]
-								# enter
-								elif char == curses.KEY_ENTER or char == 10 or char == 13:
-									status, output = globals()[drive_classes[drive_class]].credentials(code)
-									if status == 'success':
-										credentials = output
-										break
-									elif status == 'failure':
-										prompt = 'nope, try again: '
-								# exit
-								elif char == 27:
-									break
-								# character
-								else:
-									code += chr(char)
-							drive = globals()[drive_classes[drive_class]](credentials)
-							dump.add_drive(drive_class, drive.email(), drive)
-						account_refresh, refresh = True, True
-						break
-					elif key == 27:
-						break
-				if key == 27:
+						# exit
+						elif char == curses.KEY_ENTER or char == 10 or char == 13 or char == 27 or ord('n'):
+							status_line(stdscr, '')
+							break
+						# otherwise
+						else:
+							prompt = 'nope, try again (y/n)'
+				# add account
+				elif key == ord('a'):
+					prompt, drive_class, char = 'account type: ', '', None
+					while True:
+						status_line(stdscr, prompt)
+						stdscr.addstr(drive_class)
+						char = stdscr.getch()
+						# delete
+						if char == 127:
+							drive_class = drive_class[:-1]
+						# delete chunk
+						elif char == 23:
+							drive_class = drive_class.strip()
+							match = re.search('[^' + re.escape(string.printable[:62]) + ']', drive_class[::-1])
+							if match:
+								drive_class = drive_class[:-match.start()]
+							else: 
+								drive_class = ''
+						# enter
+						elif char == curses.KEY_ENTER or char == 10 or char == 13:
+							if drive_class in drive_classes:
+								status, output = globals()[drive_classes[drive_class]].credentials()
+								credentials = None
+								if status == 'success':
+									credentials = output
+									drive = globals()[drive_classes[drive_class]](credentials)
+									dump.add_drive(drive_class, drive.account, drive)
+								elif status == 'pending':
+									webbrowser.open(output)
+									prompt, code, key = 'code: ', '', None
+									while True:
+										status_line(stdscr, prompt)
+										stdscr.addstr(code)
+										key = stdscr.getch()
+										# delete
+										if key == 127:
+											code = code[:-1]
+										# enter
+										elif key == curses.KEY_ENTER or key == 10 or key == 13:
+											if code == '':
+												status_line(stdscr, '')
+												break
+											status, output = globals()[drive_classes[drive_class]].credentials(code)
+											if status == 'success':
+												credentials = output
+												drive = globals()[drive_classes[drive_class]](credentials)
+												dump.add_drive(drive_class, drive.email(), drive)
+												break
+											elif status == 'failure':
+												prompt = 'nope, try again: '
+										# exit
+										elif key == 27:
+											status_line(stdscr, '')
+											break
+										# character
+										elif key != 27:
+											code += chr(key)
+								account_refresh, refresh = True, True
+								break
+							elif drive_class == '':
+								status_line(stdscr, '')
+								break
+							else:
+								prompt = 'nope, try again: '
+						# exit
+						elif char == 27:
+							status_line(stdscr, '')
+							break
+						# character
+						else:
+							drive_class += chr(char)
+				# exit
+				elif key == 27:
+					status_line(stdscr, '')
 					break
-			prompt = ''
 		# delete
 		elif key == curses.KEY_BACKSPACE or key == 127:
 			if move or where:
 				continue
-			prompt = 'delete \'{}\' (y/n)'.format(bag.get('file_name'))
-			char = None
-			while char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
+			prompt, char = 'delete \'{}\' (y/n)'.format(bag.get('file_name')), None
+			while True:
 				status_line(stdscr, prompt)
 				char = stdscr.getch()
-				if char != curses.KEY_ENTER and char != 10 and char != 13 and char != 110:
-					# yes, delete it
-					if char == ord('y'):
-						drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
-						if bag.get('file_kind') == 'file':
-							status_line(stdscr, '...')
-							dump.delete_file(drive, bag.get('_id'))
-						elif bag.get('file_kind') == 'folder':
-							status_line(stdscr, '...')
-							dump.delete_folder(drive, bag.get('_id'))
-						break
-					# otherwise
-					else:
-						prompt = 'nope, try again (y/n)'
-			else:
-				status_line(stdscr, '')
-				continue
-			status_line(stdscr, '')
-			refresh, prompt = True, ''
+				# yes, delete it
+				if char == ord('y'):
+					drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
+					if bag.get('file_kind') == 'file':
+						status_line(stdscr, '...')
+						dump.delete_file(drive, bag.get('_id'))
+					elif bag.get('file_kind') == 'folder':
+						status_line(stdscr, '...')
+						dump.delete_folder(drive, bag.get('_id'))
+					status_line(stdscr, '')
+					refresh, prompt = True, ''
+					break
+				# exit
+				elif char == curses.KEY_ENTER or char == 10 or char == 13 or char == 27 or char == ord('n'):
+					status_line(stdscr, '')
+					break
+				# otherwise
+				else:
+					prompt = 'nope, try again (y/n)'
 		# download
 		elif key == ord('d'):
 			if move or where:
@@ -249,7 +248,7 @@ def display(stdscr):
 				dump.download_folder(drive, bag.get('_id'), bag.get('file_name'), destination)
 				status_line(stdscr, 'downloaded \'{}\''.format(bag.get('file_name')))
 		# enter
-		elif key == 10 or key == curses.KEY_ENTER or key == 13:
+		elif key == curses.KEY_ENTER or key == 10 or key == 13:
 			# if moving, toggle item
 			if move:
 				_id = bag.get('_id')
@@ -324,81 +323,70 @@ def display(stdscr):
 		elif key == ord('s'):
 			if move or where:
 				continue
-			prompt = 'search: '
-			query = None
-			search_bags = []
-			while query != '':
-				search_travel = 0
-				search_cursor = 1
-				if not query:
-					query = ''
-				# print path char-by-char loop
-				while True:
-					# show as much stuff in current folder as possible
-					for seach_bag_i in range(0, min(len(search_bags), disp_height-1)):
-						row = seach_bag_i+1
-						if row == search_cursor:
-							stdscr.addstr(row, 0, str(search_bags[seach_bag_i+search_travel]), curses.A_STANDOUT)	# cursor 
-						else:
-							stdscr.addstr(row, 0, str(search_bags[seach_bag_i+search_travel]))
-					status_line(stdscr, prompt)
-					stdscr.addstr(query)
-					char = stdscr.getch()
-					# delete
-					if char == 127:
-						query = query[:-1]
-					# delete chunk
-					elif char == 23:
-						query = query.strip()
-						match = re.search('[^' + re.escape(string.printable[:62]) + ']', query[::-1])
-						if match:
-							query = query[:-match.start()]
-						else: 
-							query = ''
-					# enter
-					elif char == curses.KEY_ENTER or char == 10 or char == 13:
-						break
-					# scroll down
-					elif char == curses.KEY_DOWN:
-						if search_cursor < min(len(search_bags), disp_height-1):
-							search_cursor += 1
-						elif search_travel < len(search_bags)-(disp_height-1):
-							search_travel += 1
-						else:
-							search_cursor, search_travel = 1, 0
-					# scroll up
-					elif char == curses.KEY_UP:
-						if search_cursor > 1:
-							search_cursor -= 1
-						elif search_travel > 0:
-							search_travel -= 1
-						else:
-							search_cursor = min(len(search_bags), disp_height-1)
-							search_travel = max(0, len(search_bags)-(disp_height-1))
-					# exit
-					elif char == 27:
-						query = ''
-						break
-					# character
-					else:
-						query += chr(char)
-				if query != '':
+			search_travel, search_cursor, search_refresh = 0, 1, True
+			prompt, query, search_bags = 'search: ', '', []
+			while True:
+				if search_refresh:
+					search_travel, search_cursor, search_refresh, search_bags = 0, 1, False, []
 					status_line(stdscr, '...')
 					files = dump.query(query)
-					search_bags = []
 					for file_id, (file_name, file_kind, drive_kind, account, date_modified) in files.items():
 						search_bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'drive_kind':drive_kind, 'account':account, '_id':file_id}))
+					# refresh screen
 					stdscr.clear()
-			else:
-				stdscr.clear()
-				for bag_i in range(0, min(len(bags), disp_height-1)):
-					row = bag_i+1
-					if row == cursor:
-						stdscr.addstr(row, 0, str(bags[bag_i+travel]), curses.A_STANDOUT)	# cursor 
+				# show as much stuff found as possible
+				for seach_bag_i in range(0, min(len(search_bags), disp_height-1)):
+					row = seach_bag_i+1
+					if row == search_cursor:
+						stdscr.addstr(row, 0, str(search_bags[seach_bag_i+search_travel]), curses.A_STANDOUT)	# cursor 
 					else:
-						stdscr.addstr(row, 0, str(bags[bag_i+travel]))
-				stdscr.refresh()
-			prompt = ''
+						stdscr.addstr(row, 0, str(search_bags[seach_bag_i+search_travel]))
+				stdscr.refresh()		
+				# show current query
+				status_line(stdscr, prompt+query)
+				# accept keystroke
+				char = stdscr.getch()
+				# delete
+				if char == 127:
+					query = query[:-1]
+				# delete chunk
+				elif char == 23:
+					query = query.strip()
+					match = re.search('[^' + re.escape(string.printable[:62]) + ']', query[::-1])
+					if match:
+						query = query[:-match.start()]
+					else: 
+						query = ''
+				# scroll down
+				elif char == curses.KEY_DOWN:
+					if search_cursor < min(len(search_bags), disp_height-1):
+						search_cursor += 1
+					elif search_travel < len(search_bags)-(disp_height-1):
+						search_travel += 1
+					else:
+						search_cursor, search_travel = 1, 0
+				# scroll up
+				elif char == curses.KEY_UP:
+					if search_cursor > 1:
+						search_cursor -= 1
+					elif search_travel > 0:
+						search_travel -= 1
+					else:
+						search_cursor = min(len(search_bags), disp_height-1)
+						search_travel = max(0, len(search_bags)-(disp_height-1))
+				# enter
+				elif char == curses.KEY_ENTER or char == 10 or char == 13:
+					if query == '':
+						status_line(stdscr, '')
+						break
+					search_refresh = True
+				# exit
+				elif char == 27:
+					status_line(stdscr, '')
+					break
+				# character
+				else:
+					query += chr(char)
 		# storage summary
 		elif key == ord(' '):
 			if move or where:
@@ -504,6 +492,9 @@ def boot():
 # method to start 'er up
 def main():
 	global dump
+	# logging
+	logging.basicConfig(level=logging.DEBUG, filename="logfile", filemode="a+",
+                        format="%(asctime)-15s %(levelname)-8s %(message)s")
 	# boot er up
 	dump = Dump(lookup=boot())
 	# and so it begins

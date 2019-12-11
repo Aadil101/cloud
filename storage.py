@@ -3,6 +3,7 @@ import datetime
 from dropbox import Dropbox, DropboxOAuth2FlowNoRedirect
 from dropbox.files import FolderMetadata
 import keyring
+import logging
 import ntpath
 import onedrivesdk
 from onedrivesdk import AuthProvider, HttpProvider, OneDriveClient
@@ -17,6 +18,13 @@ import sys
 threshold = 1e6
 drive_classes = {'google': 'GDrive', 'dropbox': 'DBox', 'box': 'Box', 'onedrive': 'ODrive'}
 
+# method to obtain and/or assign a unique id for each new account 
+def next_drive_id(drive_class, assign=False):
+    _id = 0
+    while _id in drive_class._ids: _id += 1
+    if assign: drive_class._ids.add(_id)
+    return _id
+
 class Dump:
     def __init__(self, lookup={}):
         self.lookup = lookup
@@ -29,8 +37,10 @@ class Dump:
     def get_drives(self):
         return self.lookup
     def remove_drive(self, drive_kind, account):
-        path = os.path.join('credentials', drive_kind, str(self.lookup[drive_kind][account]._id))
+        _id = self.lookup[drive_kind][account]._id
+        path = os.path.join('credentials', drive_kind, str(_id))
         shutil.rmtree(path)
+        globals()[drive_classes[drive_kind]]._ids.remove(_id)
         del self.lookup[drive_kind][account]
         if not self.lookup[drive_kind]:
             del self.lookup[drive_kind]
@@ -152,18 +162,17 @@ mimetypes = {
 }
 
 class GDrive(GoogleDrive):
-    count = 0
+    _ids = set()
     def __init__(self, credentials):
-        self._id = GDrive.count
         super(GDrive, self).__init__(self.boot(credentials))
-        GDrive.count += 1
+        self._id = next_drive_id(GDrive, assign=True)
         self.account = self.email()
     @staticmethod
     def credentials():
         # this is a new user, so build new credentials
         gauth = GoogleAuth()
         GoogleAuth.DEFAULT_SETTINGS['client_config_file'] = 'credentials/google/client_secrets.json'
-        credentials = os.path.join('credentials/google', str(GDrive.count))
+        credentials = os.path.join('credentials/google', str(next_drive_id(GDrive)))
         os.mkdir(credentials)
         gauth.LocalWebserverAuth()
         gauth.SaveCredentialsFile(os.path.join(credentials, 'credentials.txt'))
@@ -228,16 +237,15 @@ class GDrive(GoogleDrive):
             return True
 
 class DBox(Dropbox):
-    count = 0
+    _ids = set()
     auth_flow = None
     def __init__(self, credentials):
-        self._id = DBox.count
         super(DBox, self).__init__(self.boot(credentials))
-        DBox.count += 1
+        self._id = next_drive_id(DBox, assign=True)
         self.account = self.email()
     @staticmethod
     def credentials(auth_code=None):
-        credentials = os.path.join('credentials/dropbox', str(DBox.count))
+        credentials = os.path.join('credentials/dropbox', str(next_drive_id(DBox)))
         if auth_code:
             oauth_result = None
             try:
@@ -245,11 +253,11 @@ class DBox(Dropbox):
             except:
                 return 'failure', None
             else:
+                os.mkdir(credentials)
                 with open(os.path.join(credentials, 'credentials.txt'), 'a+') as file:
                     file.write(oauth_result.access_token)
                 return 'success', credentials
         else:
-            os.mkdir(credentials)
             DBox.auth_flow = DropboxOAuth2FlowNoRedirect('xflfxng1226db2t', 'rnzxajzd6hq04d6')
             auth_url = DBox.auth_flow.start()
             return 'pending', auth_url
@@ -295,16 +303,15 @@ class DBox(Dropbox):
             return True
 
 class Box(Client):
-    count = 0
+    _ids = set()
     def __init__(self, credentials):
-        self._id = Box.count
         self.username = None
         super(Box, self).__init__(self.boot(credentials))
-        Box.count += 1
+        self._id = next_drive_id(Box, assign=True)
         self.account = self.email()
     @staticmethod
     def credentials(auth_code=None):
-        credentials = os.path.join('credentials/box', str(Box.count))
+        credentials = os.path.join('credentials/box', str(next_drive_id(Box)))
         oauth = OAuth2(
             client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
             client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6'
@@ -316,6 +323,7 @@ class Box(Client):
             except:
                 return 'failure', None
             else:
+                os.mkdir(credentials)
                 username = Client(oauth).user().get().__dict__['login']
                 with open(os.path.join(credentials, 'credentials.txt'), 'a+') as file:
                     file.write(username)
@@ -323,7 +331,6 @@ class Box(Client):
                 keyring.set_password('Box_Refresh', username, refresh_token)
                 return 'success', credentials
         else:
-            os.mkdir(credentials)
             auth_url, _ = oauth.get_authorization_url('http://localhost')
             return 'pending', auth_url
     def store_tokens(self, access_token, refresh_token):
@@ -349,6 +356,7 @@ class Box(Client):
     def remaining_storage_bytes(self):
         return self.user().get().space_amount - self.used_storage_bytes()
     def query(self, query):
+        if query == '': return {}
         return {item.id:(item.name, item.type, 'box', self.account, '?') \
                 for item in self.search().query(query)}
     def files(self, folder_id='0'):
@@ -382,21 +390,20 @@ class Box(Client):
             return True
 
 class ODrive(OneDriveClient):
+    _ids = set()
     redirect_url = 'http://localhost:8080/'
     client_id='06d11a46-6c06-4dd2-8f8a-23b22041cb22'
     client_secret = 'r2A/ce3_u+WaF27EiCHTP[Eu7*rbK+55'
     base_url='https://api.onedrive.com/v1.0/'
     scopes=['wl.signin', 'wl.offline_access', 'onedrive.readwrite']
-    count = 0
     auth_provider = None
     def __init__(self, credentials):
-        self._id = ODrive.count
         super(ODrive, self).__init__(*self.boot(credentials))
-        ODrive.count += 1
+        self._id = next_drive_id(ODrive, assign=True)
         self.account = self.email()
     @staticmethod
     def credentials(auth_code=None):
-        credentials = os.path.join('credentials/onedrive', str(ODrive.count))
+        credentials = os.path.join('credentials/onedrive', str(next_drive_id(ODrive)))
         http_provider = HttpProvider()
         auth_provider = AuthProvider(
             http_provider=HttpProvider(),
@@ -409,11 +416,11 @@ class ODrive(OneDriveClient):
             except:
                 return 'failure', None
             else:
+                os.mkdir(credentials)
                 ODrive.auth_provider.save_session(path=os.path.join(credentials, 'credentials.pickle'))
                 return 'success', credentials
             ODrive.auth_provider = None
         else:
-            os.mkdir(credentials)
             ODrive.auth_provider = auth_provider
             return 'pending', auth_provider.get_auth_url(ODrive.redirect_url)
     def boot(self, credentials):
@@ -440,6 +447,7 @@ class ODrive(OneDriveClient):
     def remaining_storage_bytes(self):
         return self._quota_dict()['remaining']
     def query(self, query):
+        if query == '': return {}
         return {item.id:(item.name, 'file' if item.folder == None else 'folder', 'onedrive', self.account, item.last_modified_date_time.strftime('%m/%d/%y')) \
                 for item in self.item(drive='me', id='root').search(q=query).get().items()}
     def files(self, folder_id='root'):
