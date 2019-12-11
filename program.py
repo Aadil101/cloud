@@ -3,7 +3,6 @@ import os
 import logging
 from print_utils import *
 from storage import *
-import re
 import string
 import webbrowser
 
@@ -142,12 +141,7 @@ def display(stdscr):
 							drive_class = drive_class[:-1]
 						# delete chunk
 						elif char == 23:
-							drive_class = drive_class.strip()
-							match = re.search('[^' + re.escape(string.printable[:62]) + ']', drive_class[::-1])
-							if match:
-								drive_class = drive_class[:-match.start()]
-							else: 
-								drive_class = ''
+							drive_class = drive_class.rstrip(string.punctuation).rstrip(string.digits+string.ascii_letters)
 						# enter
 						elif char == curses.KEY_ENTER or char == 10 or char == 13:
 							if drive_class in drive_classes:
@@ -350,12 +344,7 @@ def display(stdscr):
 					query = query[:-1]
 				# delete chunk
 				elif char == 23:
-					query = query.strip()
-					match = re.search('[^' + re.escape(string.printable[:62]) + ']', query[::-1])
-					if match:
-						query = query[:-match.start()]
-					else: 
-						query = ''
+					query = query.rstrip(string.punctuation).rstrip(string.digits+string.ascii_letters)
 				# scroll down
 				elif char == curses.KEY_DOWN:
 					if search_cursor < min(len(search_bags), disp_height-1):
@@ -408,12 +397,7 @@ def display(stdscr):
 					path = path[:-1]
 				# delete chunk
 				elif char == 23:
-					path = path.strip()
-					match = re.search('[^' + re.escape(string.printable[:62]) + ']', path[::-1])
-					if match:
-						path = path[:-match.start()]
-					else: 
-						path = ''
+					path = path.rstrip(string.punctuation).rstrip(string.digits+string.ascii_letters)
 				# tab
 				elif char == 9:
 					matches = completer.complete(path)
