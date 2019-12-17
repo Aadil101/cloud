@@ -12,6 +12,7 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 import requests
 import shutil
+from utilities import get_downloads_folder
 
 # constants
 threshold = 1e6
@@ -63,11 +64,21 @@ class Dump:
             for drive in drives.values():
                 stuff.update(drive.files())
         return stuff
-    def move(self, drive_kind, account, _id, target_drive_kind, target_account, target_folder_id):
+    def move(self, drive_kind, account, _id, name, file_kind, target_drive_kind, target_account, target_folder_id):
+        drive = self.get_drive(drive_kind, account)
         if drive_kind == target_drive_kind and account == target_account:
-            self.get_drive(drive_kind, account).move(_id, target_folder_id)
+            drive.move(_id, target_folder_id)
         else:
-            print('lolz')
+            target_drive = self.get_drive(target_drive_kind, target_account)
+            temporary_destination = get_downloads_folder()
+            if file_kind == 'folder':
+                self.download_folder(drive, _id, name, temporary_destination)
+                self.add_folder(os.path.join(temporary_destination, name), target_drive, target_folder_id)
+                self.delete_folder(drive, _id)
+            else:
+                self.download_file(drive, _id, temporary_destination)
+                self.add_file(os.path.join(temporary_destination, name), target_drive, target_folder_id)
+                
     def download_folder(self, drive, folder_id, name, path):
         stack = [(folder_id, name)]
         id_to_path = {folder_id: path}
@@ -136,11 +147,9 @@ class Dump:
             if drive:
                 if os.path.getsize(path) < drive.remaining_storage_bytes()-threshold:
                     if folder_id:
-                        if not drive.add_file(path, folder_id):
-                            return 'RIP, \'{}\' already exists in this directory'.format(ntpath.basename(path))
+                        drive.add_file(path, folder_id)
                     else:
-                        if not drive.add_file(path):
-                            return 'RIP, \'{}\' already exists in the root directory'.format(ntpath.basename(path))
+                        drive.add_file(path)
                 else:
                     return 'RIP, there isn\'t enough space in this drive for \'{}\''.format(ntpath.basename(path))
             else:
@@ -198,7 +207,7 @@ class GDrive(GoogleDrive):
                 for file in self.ListFile({'q': 'title="{}" and trashed=false'.format(query)}).GetList()}
     def files(self, folder_id='root'):
         return {file['id']:(file['title'], 'folder' if file['mimeType']=='application/vnd.google-apps.folder' else 'file', 'google', self.account, datetime.datetime.strptime(file['modifiedDate'].split('T')[0], '%Y-%m-%d').strftime('%m/%d/%y')) \
-                for file in self.ListFile({'q': "'{}' in parents and trashed=false".format(folder_id)}).GetList()}
+                for file in self.ListFile({'q': '"{}" in parents and trashed=false'.format(folder_id)}).GetList()}
     def move(self, _id, target_folder_id):
         file = self.CreateFile({'id': _id})
         while True:
@@ -226,14 +235,10 @@ class GDrive(GoogleDrive):
         return new_folder['id']
     def add_file(self, path, folder_id='root'):
         existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
-        if ntpath.basename(path) in existing:
-            return False
-        else:
-            file = self.CreateFile({'title':ntpath.basename(path), 
+        file = self.CreateFile({'title':ntpath.basename(path), 
                                 'parents':[{'kind':'drive#fileLink', 'id':folder_id}]})
-            file.SetContentFile(path)
-            file.Upload()
-            return True
+        file.SetContentFile(path)
+        file.Upload()
 
 class DBox(Dropbox):
     _ids = set()
@@ -292,19 +297,20 @@ class DBox(Dropbox):
         return self.files_get_metadata(os.path.join(folder_id, ntpath.basename(path))).id
     def add_file(self, path, folder_id=''):
         existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
-        if ntpath.basename(path) in existing:
-            return False
-        else:
-            with open(path, 'rb') as file:
-                if folder_id == '' or len(folder_id) < 3 or folder_id[:3] != 'id:':
-                    folder_id = '/' + folder_id
-                self.files_upload(file.read(), os.path.join(folder_id, ntpath.basename(path)))
-            return True
+        title = ntpath.basename(path)
+        if title in existing:
+            base, suffix = title, 1
+            while '{} ({})'.format(base, suffix) in existing:
+                suffix += 1
+            title = '{} ({})'.format(base, suffix)
+        with open(path, 'rb') as file:
+            if folder_id == '' or len(folder_id) < 3 or folder_id[:3] != 'id:':
+                folder_id = '/' + folder_id
+            self.files_upload(file.read(), os.path.join(folder_id, title))
 
 class Box(Client):
     _ids = set()
     def __init__(self, credentials):
-        self.username = None
         super(Box, self).__init__(self.boot(credentials))
         self._id = next_drive_id(Box, assign=True)
         self.account = self.email()
@@ -323,33 +329,33 @@ class Box(Client):
                 return 'failure', None
             else:
                 os.mkdir(credentials)
-                username = Client(oauth).user().get().__dict__['login']
+                account = Client(oauth).user().get().__dict__['login']
                 with open(os.path.join(credentials, 'credentials.txt'), 'a+') as file:
-                    file.write(username)
-                keyring.set_password('Box_Auth', username, access_token)
-                keyring.set_password('Box_Refresh', username, refresh_token)
+                    file.write(account)
+                keyring.set_password('Box_Auth', account, access_token)
+                keyring.set_password('Box_Refresh', account, refresh_token)
                 return 'success', credentials
         else:
             auth_url, _ = oauth.get_authorization_url('http://localhost')
             return 'pending', auth_url
     def store_tokens(self, access_token, refresh_token):
         # use keyring to store the tokens
-        keyring.set_password('Box_Auth', self.username, access_token)
-        keyring.set_password('Box_Refresh', self.username, refresh_token)
+        keyring.set_password('Box_Auth', self.account, access_token)
+        keyring.set_password('Box_Refresh', self.account, refresh_token)
     def boot(self, credentials):
         with open(os.path.join(credentials, 'credentials.txt')) as file:
-            self.username = file.readline()
+            self.account = file.readline()
         # build credentials
         oauth = OAuth2(
             client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
             client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
             store_tokens=self.store_tokens,
-            access_token=keyring.get_password('Box_Auth', self.username),
-            refresh_token=keyring.get_password('Box_Refresh', self.username)
+            access_token=keyring.get_password('Box_Auth', self.account),
+            refresh_token=keyring.get_password('Box_Refresh', self.account)
 		)
         return oauth
     def email(self):
-        return self.user().get()['login']
+        return self.user().get().__dict__['login']
     def used_storage_bytes(self):
         return self.user().get().space_used
     def remaining_storage_bytes(self):
@@ -382,11 +388,13 @@ class Box(Client):
         return self.folder(folder_id).create_subfolder(ntpath.basename(path)).id
     def add_file(self, path, folder_id='0'):
         existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
-        if ntpath.basename(path) in existing:
-            return False
-        else:
-            self.folder(folder_id).upload(path)
-            return True
+        title = ntpath.basename(path)
+        if title in existing:
+            base, suffix = title, 1
+            while '{} ({})'.format(base, suffix) in existing:
+                suffix += 1
+            title = '{} ({})'.format(base, suffix)
+        self.folder(folder_id).upload(path, title)
 
 class ODrive(OneDriveClient):
     _ids = set()
@@ -476,8 +484,10 @@ class ODrive(OneDriveClient):
         return self.item(drive='me', id=folder_id).children.add(item).id
     def add_file(self, path, folder_id='root'):
         existing = {title for title, _, __, ___, ___ in self.files(folder_id).values()}
-        if ntpath.basename(path) in existing:
-            return False
-        else:
-            self.item(drive='me', id=folder_id).children[ntpath.basename(path)].upload(path)
-            return True
+        title = ntpath.basename(path)
+        if title in existing:
+            base, suffix = title, 1
+            while '{} ({})'.format(base, suffix) in existing:
+                suffix += 1
+            title = '{} ({})'.format(base, suffix)
+        self.item(drive='me', id=folder_id).children[title].upload(path)

@@ -1,7 +1,7 @@
 import curses
 import os
 import logging
-from print_utils import *
+from utilities import *
 from storage import *
 import string
 import webbrowser
@@ -45,7 +45,7 @@ def display(stdscr):
 					continue
 				bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'account':account, 'drive_kind':drive_kind, '_id':file_id}))
 			# the show begins
-			travel, cursor, reverse, refresh = 0, 1, False, False
+			travel, cursor, reverse, refresh = 0, min(cursor, len(bags)), False, False
 			stdscr.clear()
 		(disp_height, disp_width) = stdscr.getmaxyx()
 		# show as much stuff in current folder as possible
@@ -231,7 +231,7 @@ def display(stdscr):
 			if move or where:
 				continue
 			drive = dump.get_drive(bag.get('drive_kind'), bag.get('account'))
-			destination = '/Users/pickle/Downloads/'
+			destination = get_downloads_folder()
 			if bag.get('file_kind') == 'file':
 				status_line(stdscr, '...')
 				dump.download_file(drive, bag.get('_id'), destination)
@@ -248,7 +248,7 @@ def display(stdscr):
 				if _id in to_move:
 					del to_move[_id]
 				else:
-					to_move[_id] = (bag.get('drive_kind'), bag.get('account'))
+					to_move[_id] = (bag.get('drive_kind'), bag.get('account'), bag.get('file_name'), bag.get('file_kind'))
 			# enter folder
 			elif bag.get('file_kind') == 'folder':
 				del page_history[page_i+1:]
@@ -264,12 +264,12 @@ def display(stdscr):
 				move, where, refresh, prompt = False, True, False, 'go to desired folder & hit \'m\'.'
 			# phase 3: move items to desired folder
 			elif where:
-				for _id, (drive_kind, account) in to_move.items():
-					dump.move(drive_kind, account, _id, curr_drive_kind, curr_account, curr_folder_id)
+				for _id, (drive_kind, account, file_name, file_kind) in to_move.items():
+					dump.move(drive_kind, account, _id, file_name, file_kind, curr_drive_kind, curr_account, curr_folder_id)
 				where, to_move, refresh, prompt = False, {}, True, 'moved.'
 			# phase 1: ask what items to move
 			else:
-				move, to_move, prompt = True, {bag.get('_id'):(bag.get('drive_kind'), bag.get('account'))}, 'pick items to move & hit \'m\'.'
+				move, to_move, prompt = True, {bag.get('_id'):(bag.get('drive_kind'), bag.get('account'), bag.get('file_name'), bag.get('file_kind'))}, 'pick items to move & hit \'m\'.'
 			status_line(stdscr, prompt)
 		# page retreat
 		elif key == curses.KEY_LEFT:
@@ -467,8 +467,8 @@ def boot():
 def main():
 	global dump
 	# logging
-	logging.basicConfig(level=logging.DEBUG, filename="logfile", filemode="a+",
-                        format="%(asctime)-15s %(levelname)-8s %(message)s")
+	logging.basicConfig(level=logging.DEBUG, filename='logfile', filemode='a+',
+                        format='%(asctime)-15s %(levelname)-8s %(message)s')
 	# boot er up
 	dump = Dump(lookup=boot())
 	# and so it begins
