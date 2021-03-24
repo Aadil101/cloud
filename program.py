@@ -28,38 +28,41 @@ def display(stdscr):
 	curses.curs_set(0)	# but no cursor for you 
 	curses.start_color()  # initiate colors
 	curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_BLUE)   # boom
-	page_history, page_i = [(None, None, None)], 0	# bunch of (drive_kind, account, folder_id) tuples
-	curr_drive_kind, curr_account, curr_folder_id = None, None, None   # holds details for current directory
+	curses.use_default_colors()
+	page_history, page_i = [(None, None, None, None)], 0	# bunch of (drive_kind, account, folder_id, bags) tuples
+	curr_drive_kind, curr_account, curr_folder_id, curr_bags = None, None, None, None   # holds details for current directory
 	bags, to_move = [], {} # to hold stuff
 	prompt, keep_prompt, travel, cursor, reverse, refresh, move, where = '', False, 0, 1, False, True, False, False
 	while True:
 		# maybe refresh
 		if refresh:
 			# get stuff in current folder
-			(curr_drive_kind, curr_account, curr_folder_id) = page_history[page_i]
+			(curr_drive_kind, curr_account, curr_folder_id, curr_bags) = page_history[page_i]
 			status_line(stdscr, '...')
-			bags = []
 			curr_drive = dump.get_drive(curr_drive_kind, curr_account) if curr_drive_kind else None
-			for file_id, (file_name, file_kind, drive_kind, account, date_modified) in dump.files(curr_drive, curr_folder_id).items():
-				if file_name.startswith('.'):
-					continue
-				bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'account':account, 'drive_kind':drive_kind, '_id':file_id}))
+			if curr_bags is None:
+				curr_bags = []
+				for file_id, (file_name, file_kind, drive_kind, account, date_modified) in dump.files(curr_drive, curr_folder_id).items():
+					if file_name.startswith('.'):
+						continue
+					curr_bags.append(Bag({'file_kind':file_kind, 'file_name':file_name, 'date_modified':date_modified, 'account':account, 'drive_kind':drive_kind, '_id':file_id}))
+				page_history[page_i] = (curr_drive_kind, curr_account, curr_folder_id, curr_bags)
 			# the show begins
-			travel, cursor, reverse, refresh = 0, min(cursor, len(bags)), False, False
+			travel, cursor, reverse, refresh = 0, min(cursor, len(curr_bags)), False, False
 			stdscr.clear()
 		(disp_height, disp_width) = stdscr.getmaxyx()
 		# show as much stuff in current folder as possible
-		for bag_i in range(0, min(len(bags), disp_height-1)):
+		for bag_i in range(0, min(len(curr_bags), disp_height-1)):
 			row = bag_i+1
-			if bags[bag_i+travel].get('_id') in to_move:
-				stdscr.addstr(row, 0, str(bags[bag_i+travel]), curses.color_pair(1))	# to move
+			if curr_bags[bag_i+travel].get('_id') in to_move:
+				stdscr.addstr(row, 0, str(curr_bags[bag_i+travel]), curses.color_pair(1))	# to move
 			elif row == cursor:
-				stdscr.addstr(row, 0, str(bags[bag_i+travel]), curses.A_STANDOUT)	# cursor 
+				stdscr.addstr(row, 0, str(curr_bags[bag_i+travel]), curses.A_STANDOUT)	# cursor 
 			else:
-				stdscr.addstr(row, 0, str(bags[bag_i+travel]))
+				stdscr.addstr(row, 0, str(curr_bags[bag_i+travel]))
 		stdscr.refresh()
 		# selected bag
-		bag = bags[cursor+travel-1]
+		bag = curr_bags[cursor+travel-1] if cursor > 0 else None
 		# accept keystroke
 		key = stdscr.getch()
 		# clear the status line
@@ -89,7 +92,7 @@ def display(stdscr):
 						stdscr.addstr(row, 0, str(sacks[drive_i+account_travel]))
 				stdscr.refresh()
 				# selected sack
-				sack = sacks[account_cursor+account_travel-1]
+				sack = sacks[account_cursor+account_travel-1] if account_travel > 0 else None
 				# accept keystroke
 				key = stdscr.getch()
 				# scroll down
@@ -252,7 +255,7 @@ def display(stdscr):
 			# enter folder
 			elif bag.get('file_kind') == 'folder':
 				del page_history[page_i+1:]
-				page_history.append((bag.get('drive_kind'), bag.get('account'), bag.get('_id')))
+				page_history.append((bag.get('drive_kind'), bag.get('account'), bag.get('_id'), None))
 				page_i += 1
 				if len(page_history) > max_page_history_length:
 					page_history.pop(0)
@@ -262,15 +265,18 @@ def display(stdscr):
 			# phase 2: ask where to move items
 			if move:
 				move, where, refresh, prompt = False, True, False, 'go to desired folder & hit \'m\'.'
+				status_line(stdscr, prompt)
 			# phase 3: move items to desired folder
 			elif where:
+				status_line(stdscr, '...')
 				for _id, (drive_kind, account, file_name, file_kind) in to_move.items():
 					dump.move(drive_kind, account, _id, file_name, file_kind, curr_drive_kind, curr_account, curr_folder_id)
 				where, to_move, refresh, prompt = False, {}, True, 'moved.'
+				status_line(stdscr, prompt)
 			# phase 1: ask what items to move
 			else:
 				move, to_move, prompt = True, {bag.get('_id'):(bag.get('drive_kind'), bag.get('account'), bag.get('file_name'), bag.get('file_kind'))}, 'pick items to move & hit \'m\'.'
-			status_line(stdscr, prompt)
+				status_line(stdscr, prompt)
 		# page retreat
 		elif key == curses.KEY_LEFT:
 			if page_i > 0:
@@ -297,9 +303,9 @@ def display(stdscr):
 				return
 		# scroll down
 		elif key == curses.KEY_DOWN:
-			if cursor < min(len(bags), disp_height-1):
+			if cursor < min(len(curr_bags), disp_height-1):
 				cursor += 1
-			elif travel < len(bags)-(disp_height-1):
+			elif travel < len(curr_bags)-(disp_height-1):
 				travel += 1
 			else:
 				cursor, travel = 1, 0
@@ -310,8 +316,8 @@ def display(stdscr):
 			elif travel > 0:
 				travel -= 1
 			else:
-				cursor = min(len(bags), disp_height-1)
-				travel = max(0, len(bags)-(disp_height-1))
+				cursor = min(len(curr_bags), disp_height-1)
+				travel = max(0, len(curr_bags)-(disp_height-1))
 		# search
 		elif key == ord('s'):
 			if move or where:
@@ -432,19 +438,19 @@ def display(stdscr):
 					path += chr(char)
 		# sort files by file kind
 		elif key == ord('1'):
-			bags.sort(key=lambda bag: bag.get('file_kind'), reverse=reverse)
+			curr_bags.sort(key=lambda bag: bag.get('file_kind'), reverse=reverse)
 			reverse = not reverse
 		# sort files by file name
 		elif key == ord('2'):
-			bags.sort(key=lambda bag: bag.get('file_name').lower(), reverse=reverse)
+			curr_bags.sort(key=lambda bag: bag.get('file_name').lower(), reverse=reverse)
 			reverse = not reverse
 		# sort files by drive kind
 		elif key == ord('3'):
-			bags.sort(key=lambda bag: bag.get('drive_kind'), reverse=reverse)
+			curr_bags.sort(key=lambda bag: bag.get('drive_kind'), reverse=reverse)
 			reverse = not reverse
 		# sort files by date modified
 		elif key == ord('4'):
-			bags.sort(key=lambda bag: bag.get('date_modified'), reverse=reverse)
+			curr_bags.sort(key=lambda bag: bag.get('date_modified'), reverse=reverse)
 			reverse = not reverse
 		else:
 			stdscr.addstr(0, 0, 'uh-oh: {}\\'.format(key))
@@ -459,8 +465,11 @@ def boot():
 		for account_id in os.listdir(os.path.join('credentials', drive_name)):
 			if not account_id.isdigit():
 				continue
-			drive = globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account_id))
-			lookup[drive_name][drive.account] = drive
+			try:
+				drive = globals()[drive_classes[drive_name]](os.path.join('credentials', drive_name, account_id))
+				lookup[drive_name][drive.account] = drive
+			except:
+				continue
 	return lookup
 
 # method to start 'er up

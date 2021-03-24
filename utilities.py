@@ -1,15 +1,5 @@
 import os
 
-class Bag:
-	def __init__(self, lookup={}):
-		self.lookup = lookup
-	def get(self, name):
-		return self.lookup[name]
-	def __str__(self):
-		char_limit_dict = {'file_kind':7, 'file_name':20, 'drive_kind':10, 'date_modified':10}
-		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
-									 for key in ['file_kind', 'file_name', 'drive_kind', 'date_modified'])
-
 # This is for autocompleting a path when the user presses tab.
 # I made adjustments to samplebias's 'Completer' code from:
 # https://stackoverflow.com/questions/5637124/tab-completion-in-pythons-raw-input
@@ -59,23 +49,15 @@ class Completer:
 
 def print_bytes(num_bytes):
 	if num_bytes < 1e3:
-		return '{} bytes'.format(num_bytes)
+		return '{:.1f} bytes'.format(num_bytes)
 	elif num_bytes < 1e6:
-		return '{} kb'.format(int(round(1.0*num_bytes/1024)))
+		return '{:.1f} kb'.format(1.0*num_bytes/1e3)
 	elif num_bytes < 1e9:
-		return '{} mb'.format(int(round(1.0*num_bytes/1024**2)))
+		return '{:.1f} mb'.format(1.0*num_bytes/1e6)
+	elif num_bytes < 1e12:
+		return '{:.1f} gb'.format(1.0*num_bytes/1e9)
 	else:
-		return '{} gb'.format(int(round(1.0*num_bytes/1024**3)))
-
-class Sack:
-	def __init__(self, lookup={}):
-		self.lookup = lookup
-	def get(self, name):
-		return self.lookup[name]
-	def __str__(self):
-		char_limit_dict = {'drive_kind':10, 'account':30}
-		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
-									 for key in ['drive_kind', 'account'])
+		return '{:.1f} tb'.format(1.0*num_bytes/1e12)
 
 # Finding user's downloads folder is a bit annoying on Windows.
 # I modified user4815162342's code from:

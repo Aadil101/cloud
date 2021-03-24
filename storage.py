@@ -18,6 +18,26 @@ from utilities import get_downloads_folder
 threshold = 1e6
 drive_classes = {'google': 'GDrive', 'dropbox': 'DBox', 'box': 'Box', 'onedrive': 'ODrive'}
 
+class Bag:
+	def __init__(self, lookup={}):
+		self.lookup = lookup
+	def get(self, name):
+		return self.lookup[name]
+	def __str__(self):
+		char_limit_dict = {'file_kind':7, 'file_name':20, 'drive_kind':10, 'date_modified':10}
+		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
+									 for key in ['file_kind', 'file_name', 'drive_kind', 'date_modified'])
+
+class Sack:
+	def __init__(self, lookup={}):
+		self.lookup = lookup
+	def get(self, name):
+		return self.lookup[name]
+	def __str__(self):
+		char_limit_dict = {'drive_kind':10, 'account':30}
+		return ''.join(self.get(key)[:char_limit_dict[key]].ljust(char_limit_dict[key]+1) \
+									 for key in ['drive_kind', 'account'])
+
 # method to obtain and/or assign a unique id for each new account 
 def next_drive_id(drive_class, assign=False):
     _id = 0
@@ -77,8 +97,7 @@ class Dump:
                 self.delete_folder(drive, _id)
             else:
                 self.download_file(drive, _id, temporary_destination)
-                self.add_file(os.path.join(temporary_destination, name), target_drive, target_folder_id)
-                
+                self.add_file(os.path.join(temporary_destination, name), target_drive, target_folder_id)   
     def download_folder(self, drive, folder_id, name, path):
         stack = [(folder_id, name)]
         id_to_path = {folder_id: path}
@@ -319,7 +338,7 @@ class Box(Client):
         credentials = os.path.join('credentials/box', str(next_drive_id(Box)))
         oauth = OAuth2(
             client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
-            client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6'
+            client_secret='icDxjMAFSuERimeonuwQEiutp696b2wb'
         )
         if auth_code:
             access_token, refresh_token = None, None
@@ -348,7 +367,7 @@ class Box(Client):
         # build credentials
         oauth = OAuth2(
             client_id='x5jgd9owo4utthuk6vz0qxu3ejxv2drz',
-            client_secret='X5ZVOxuOIAIIjMBCyCo7IQxWxX0UWfX6',
+            client_secret='icDxjMAFSuERimeonuwQEiutp696b2wb',
             store_tokens=self.store_tokens,
             access_token=keyring.get_password('Box_Auth', self.account),
             refresh_token=keyring.get_password('Box_Refresh', self.account)
