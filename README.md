@@ -1,22 +1,22 @@
-# cloud
+# Cloud
 Command-line access to your files across major cloud service accounts. Currently works with Google Drive, OneDrive, Box, and Dropbox. Implemented such that new services (Python API required) can easily be incorporated in the future.
 
-# demo
+# Demo
 ![demo](images/demo.gif)
 
-# features
+# Features
 
-### upload this
+### Upload this
 ![upload](images/upload.gif)
 
-### delete that
+### Delete that
 ![delete](images/delete.gif)
 
-### download things
+### Download things
 ![download](images/download.gif)
 
-### search it
+### Search it
 ![search](images/search.gif)
 
-### storage summary
+### Storage summary
 ![summary](images/summary.gif)
